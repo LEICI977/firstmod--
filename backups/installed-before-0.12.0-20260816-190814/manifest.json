@@ -1,0 +1,9 @@
+{
+  "Name": "Stardew AI Memories",
+  "Author": "firstmod",
+  "Version": "0.11.1",
+  "Description": "Persistent AI conversations with live game memory and contextual per-NPC gifts.",
+  "UniqueID": "firstmod.StardewAIMemories",
+  "EntryDll": "StardewAIMemories.dll",
+  "MinimumApiVersion": "4.0.0"
+}

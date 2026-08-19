@@ -1,0 +1,9 @@
+{
+  "Name": "Stardew AI Memories",
+  "Author": "firstmod",
+  "Version": "0.2.1",
+  "Description": "Streaming, game-state-aware DeepSeek conversations with persistent villager memories.",
+  "UniqueID": "firstmod.StardewAIMemories",
+  "EntryDll": "StardewAIMemories.dll",
+  "MinimumApiVersion": "4.0.0"
+}

@@ -1,0 +1,19 @@
+{
+  "ChatKey": "K",
+  "AllowNearbyNpcFallback": true,
+  "MaxTalkDistanceTiles": 3.5,
+  "PromptForApiKeyEveryLaunch": true,
+  "ApiUrl": "https://api.deepseek.com/chat/completions",
+  "Model": "deepseek-v4-flash",
+  "EnableThinking": true,
+  "ReasoningEffort": "high",
+  "RequestTimeoutSeconds": 90,
+  "MaxContextMessages": 32,
+  "SummaryTriggerMessages": 32,
+  "SummaryKeepRecentMessages": 12,
+  "MaxSeenEventIdsInContext": 40,
+  "MaxQuestsInContext": 8,
+  "MaxReplyCharacters": 1200,
+  "MaxOutputTokens": 4096,
+  "ApiKey": ""
+}

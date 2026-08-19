@@ -1,0 +1,65 @@
+{
+  "id": "abigail.starlight-promise.03",
+  "version": 1,
+  "npc": "Abigail",
+  "priority": 80,
+  "enabled": true,
+  "repeatable": false,
+  "trigger": {
+    "minHearts": 2,
+    "minConversationTurns": 1,
+    "delayDays": 2,
+    "expiryDays": 7,
+    "cooldownDays": 0,
+    "requiredFlags": ["abigail.arc.middle-complete"],
+    "forbiddenFlags": ["abigail.arc.complete"]
+  },
+  "scene": {
+    "startTime": 1800,
+    "endTime": 2500,
+    "activationDistanceTiles": 8.0,
+    "giftItemId": "",
+    "aiBrief": "这是这条小型感情支线的晚间结局。Abigail结合最近记忆里玩家对冒险、关心或玩笑的回答，承认自己开始期待每次相遇。她不直接告白，而是认真询问玩家希望两人的关系今后怎样前进。语气克制、真诚，像乙女游戏中的关系确认场景。",
+    "fallbackText": "最近我总会想起你说过的话。以前我只觉得冒险就是往未知的地方走，可现在……我开始期待路上有一个固定会回头看的人。别笑我，我只是想认真问一次：以后，你希望我们怎么走下去？",
+    "acceptText": "回应她",
+    "deferText": "改天再说"
+  },
+  "choices": [
+    {
+      "id": "stay-close",
+      "text": "我想一直陪在你身边",
+      "memoryText": "我告诉Abigail，我想一直陪在她身边。",
+      "receiveGift": false,
+      "defer": false,
+      "nextStoryId": "",
+      "effects": {
+        "trust": 3,
+        "affection": 6,
+        "setFlags": ["abigail.arc.complete", "abigail.arc.ending-close"]
+      }
+    },
+    {
+      "id": "take-time",
+      "text": "我们慢慢走，但别把我落下",
+      "memoryText": "我请Abigail和我慢慢靠近，也告诉她不要把我落下。",
+      "receiveGift": false,
+      "defer": false,
+      "nextStoryId": "",
+      "effects": {
+        "trust": 5,
+        "affection": 3,
+        "setFlags": ["abigail.arc.complete", "abigail.arc.ending-gentle"]
+      }
+    },
+    {
+      "id": "defer",
+      "text": "这个问题，我想下次认真回答",
+      "memoryText": "我请Abigail下次再让我认真回答。",
+      "receiveGift": false,
+      "defer": true,
+      "nextStoryId": "",
+      "effects": {"trust": 0, "affection": 0, "setFlags": []}
+    }
+  ],
+  "acceptEffects": {"trust": 0, "affection": 0, "setFlags": []}
+}

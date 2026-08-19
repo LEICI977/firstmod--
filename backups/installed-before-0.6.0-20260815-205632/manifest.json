@@ -1,0 +1,9 @@
+{
+  "Name": "Stardew AI Memories",
+  "Author": "firstmod",
+  "Version": "0.5.0",
+  "Description": "Persistent AI conversations with data-driven, branching proactive NPC story arcs.",
+  "UniqueID": "firstmod.StardewAIMemories",
+  "EntryDll": "StardewAIMemories.dll",
+  "MinimumApiVersion": "4.0.0"
+}

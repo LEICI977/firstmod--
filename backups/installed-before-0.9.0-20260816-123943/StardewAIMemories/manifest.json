@@ -1,0 +1,9 @@
+{
+  "Name": "Stardew AI Memories",
+  "Author": "firstmod",
+  "Version": "0.8.0",
+  "Description": "Persistent AI conversations with twice-daily social encounters, verified gifts, and next-day mailbox delivery.",
+  "UniqueID": "firstmod.StardewAIMemories",
+  "EntryDll": "StardewAIMemories.dll",
+  "MinimumApiVersion": "4.0.0"
+}

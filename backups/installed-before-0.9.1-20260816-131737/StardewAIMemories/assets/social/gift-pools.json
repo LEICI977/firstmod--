@@ -1,0 +1,285 @@
+{
+  "schemaVersion": 1,
+  "gifts": [
+    {
+      "key": "general_field_snack",
+      "qualifiedItemId": "(O)403",
+      "displayHint": "一份朴素的随身点心，适合玩家忙碌、探索或体力不足时。",
+      "npcNames": [],
+      "applicableTags": ["general", "low_energy", "foraging", "mining"],
+      "priority": 10
+    },
+    {
+      "key": "general_bread",
+      "qualifiedItemId": "(O)216",
+      "displayHint": "普通而实用的食物，只在没有更符合人物特点的候选时考虑。",
+      "npcNames": [],
+      "applicableTags": ["general", "low_energy"],
+      "priority": 0
+    },
+    {
+      "key": "abigail_quartz",
+      "qualifiedItemId": "(O)80",
+      "displayHint": "适合 Abigail 回应玩家最近的采矿、洞穴或矿石话题。",
+      "npcNames": ["Abigail"],
+      "applicableTags": ["mining", "cave", "mineral"],
+      "priority": 90
+    },
+    {
+      "key": "sebastian_frozen_tear",
+      "qualifiedItemId": "(O)84",
+      "displayHint": "适合 Sebastian 在冬季、矿洞或安静而真诚的对话后送出。",
+      "npcNames": ["Sebastian"],
+      "applicableTags": ["winter", "mining", "quiet", "mineral"],
+      "priority": 80
+    },
+    {
+      "key": "clint_coal",
+      "qualifiedItemId": "(O)382",
+      "displayHint": "Clint 会认为这对冶炼或近期采矿很实用。",
+      "npcNames": ["Clint"],
+      "applicableTags": ["mining", "smelting", "construction"],
+      "priority": 80
+    },
+    {
+      "key": "clint_copper_ore",
+      "qualifiedItemId": "(O)378",
+      "displayHint": "一小块普通矿石，适合回应玩家刚开始采矿或冶炼。",
+      "npcNames": ["Clint", "Maru"],
+      "applicableTags": ["mining", "smelting"],
+      "priority": 70
+    },
+    {
+      "key": "dwarf_cave_carrot",
+      "qualifiedItemId": "(O)78",
+      "displayHint": "来自洞穴环境的普通食物，适合近期深入矿洞的玩家。",
+      "npcNames": ["Dwarf", "Linus"],
+      "applicableTags": ["mining", "cave", "low_energy"],
+      "priority": 75
+    },
+    {
+      "key": "willy_bait",
+      "qualifiedItemId": "(O)685",
+      "displayHint": "Willy 针对玩家近期钓鱼活动给的一点实用补给。",
+      "npcNames": ["Willy"],
+      "applicableTags": ["fishing", "beach"],
+      "priority": 90
+    },
+    {
+      "key": "willy_chowder",
+      "qualifiedItemId": "(O)727",
+      "displayHint": "适合长时间钓鱼、雨天出海或体力不足后的热食。",
+      "npcNames": ["Willy", "Gus"],
+      "applicableTags": ["fishing", "rain", "low_energy"],
+      "priority": 75
+    },
+    {
+      "key": "leah_salad",
+      "qualifiedItemId": "(O)196",
+      "displayHint": "Leah 偏好的清爽食物，适合耕作、觅食或健康生活话题。",
+      "npcNames": ["Leah", "Caroline", "Gus"],
+      "applicableTags": ["farming", "foraging", "low_energy"],
+      "priority": 75
+    },
+    {
+      "key": "harvey_coffee",
+      "qualifiedItemId": "(O)395",
+      "displayHint": "适合 Harvey 或 Gus 关心玩家早起、疲劳和长时间劳动。",
+      "npcNames": ["Harvey", "Gus"],
+      "applicableTags": ["low_energy", "early_morning", "mining", "fishing"],
+      "priority": 80
+    },
+    {
+      "key": "evelyn_cookie",
+      "qualifiedItemId": "(O)223",
+      "displayHint": "Evelyn 或 Jodi 表达日常关心时送出的家常点心。",
+      "npcNames": ["Evelyn", "Jodi"],
+      "applicableTags": ["general", "low_energy", "family"],
+      "priority": 80
+    },
+    {
+      "key": "caroline_green_tea",
+      "qualifiedItemId": "(O)614",
+      "displayHint": "Caroline 在平静聊天、疲劳或健康话题后分享的饮品。",
+      "npcNames": ["Caroline"],
+      "applicableTags": ["general", "low_energy", "quiet", "farming"],
+      "priority": 85
+    },
+    {
+      "key": "alex_field_snack",
+      "qualifiedItemId": "(O)403",
+      "displayHint": "Alex 在运动、探索或玩家体力不足时给的便携补给。",
+      "npcNames": ["Alex"],
+      "applicableTags": ["low_energy", "combat", "mining"],
+      "priority": 80
+    },
+    {
+      "key": "sam_joja_cola",
+      "qualifiedItemId": "(O)167",
+      "displayHint": "Sam 随手分享的饮料，适合忙碌、钓鱼或轻松聊天。",
+      "npcNames": ["Sam"],
+      "applicableTags": ["general", "low_energy", "fishing", "playful"],
+      "priority": 70
+    },
+    {
+      "key": "shane_pepper_poppers",
+      "qualifiedItemId": "(O)215",
+      "displayHint": "Shane 在熟悉之后分享的食物，适合耕作或辛苦劳动后。",
+      "npcNames": ["Shane"],
+      "applicableTags": ["farming", "low_energy", "warm"],
+      "priority": 80
+    },
+    {
+      "key": "marnie_cheese",
+      "qualifiedItemId": "(O)424",
+      "displayHint": "Marnie 针对农场劳动或体力消耗分享的普通农产品。",
+      "npcNames": ["Marnie"],
+      "applicableTags": ["farming", "animals", "low_energy"],
+      "priority": 80
+    },
+    {
+      "key": "robin_spaghetti",
+      "qualifiedItemId": "(O)224",
+      "displayHint": "Robin 在玩家建造、忙碌或长时间劳动后给的一顿实在食物。",
+      "npcNames": ["Robin"],
+      "applicableTags": ["construction", "low_energy", "farming"],
+      "priority": 80
+    },
+    {
+      "key": "demetrius_common_mushroom",
+      "qualifiedItemId": "(O)404",
+      "displayHint": "Demetrius、Linus 或 Leah 针对觅食和自然观察分享的常见样本。",
+      "npcNames": ["Demetrius", "Linus", "Leah"],
+      "applicableTags": ["foraging", "forest", "science"],
+      "priority": 75
+    },
+    {
+      "key": "emily_cloth",
+      "qualifiedItemId": "(O)428",
+      "displayHint": "Emily 针对缝纫、制作或农场动物话题分享的一块布料。",
+      "npcNames": ["Emily"],
+      "applicableTags": ["crafting", "animals", "farming"],
+      "priority": 80
+    },
+    {
+      "key": "haley_sunflower",
+      "qualifiedItemId": "(O)421",
+      "displayHint": "Haley 在夏秋、摄影或轻松温暖的对话后送的一朵花。",
+      "npcNames": ["Haley"],
+      "applicableTags": ["summer", "fall", "warm", "photography"],
+      "priority": 80
+    },
+    {
+      "key": "pierre_parsnip",
+      "qualifiedItemId": "(O)24",
+      "displayHint": "Pierre 在聊到春季播种、收成或杂货店生意时分享的一份普通农产品。",
+      "npcNames": ["Pierre"],
+      "applicableTags": ["general", "spring", "farming"],
+      "priority": 88
+    },
+    {
+      "key": "pierre_apple",
+      "qualifiedItemId": "(O)613",
+      "displayHint": "Pierre 回应果树、秋季收成、农场经营或温暖日常话题时送出的苹果。",
+      "npcNames": ["Pierre"],
+      "applicableTags": ["general", "fall", "farming", "warm"],
+      "priority": 84
+    },
+    {
+      "key": "pierre_fried_calamari",
+      "qualifiedItemId": "(O)202",
+      "displayHint": "Pierre 在关系较熟、玩家忙碌或聊到食物时才会分享的一份成品菜。",
+      "npcNames": ["Pierre"],
+      "applicableTags": ["general", "warm", "low_energy"],
+      "priority": 78
+    },
+    {
+      "key": "elliott_crab_cakes",
+      "qualifiedItemId": "(O)732",
+      "displayHint": "Elliott 回应海边、写作后的疲惫或一段真诚谈话时分享的海味点心。",
+      "npcNames": ["Elliott"],
+      "applicableTags": ["general", "beach", "fishing", "warm"],
+      "priority": 85
+    },
+    {
+      "key": "penny_melon",
+      "qualifiedItemId": "(O)254",
+      "displayHint": "Penny 在夏季、读书、家庭或温柔关心玩家时送出的水果。",
+      "npcNames": ["Penny"],
+      "applicableTags": ["general", "summer", "family", "warm"],
+      "priority": 82
+    },
+    {
+      "key": "pam_parsnip_soup",
+      "qualifiedItemId": "(O)199",
+      "displayHint": "Pam 在熟悉以后关心玩家劳作、疲惫或晚归时给的一份热食。",
+      "npcNames": ["Pam"],
+      "applicableTags": ["general", "low_energy", "warm"],
+      "priority": 82
+    },
+    {
+      "key": "kent_roasted_hazelnuts",
+      "qualifiedItemId": "(O)607",
+      "displayHint": "Kent 在安静、家庭或秋季话题后用不张扬的方式分享的一份食物。",
+      "npcNames": ["Kent"],
+      "applicableTags": ["general", "fall", "family", "quiet"],
+      "priority": 82
+    },
+    {
+      "key": "lewis_hot_pepper",
+      "qualifiedItemId": "(O)260",
+      "displayHint": "Lewis 回应农场经营、夏季作物或镇务忙碌时分享的一份农产品。",
+      "npcNames": ["Lewis"],
+      "applicableTags": ["general", "summer", "farming"],
+      "priority": 80
+    },
+    {
+      "key": "maru_battery_pack",
+      "qualifiedItemId": "(O)787",
+      "displayHint": "Maru 在发明、设备、雷雨或农场自动化话题后认为玩家会用得上的材料。",
+      "npcNames": ["Maru"],
+      "applicableTags": ["general", "crafting", "construction", "rain"],
+      "priority": 84
+    },
+    {
+      "key": "george_leek",
+      "qualifiedItemId": "(O)20",
+      "displayHint": "George 针对春季觅食或朴素日常话题分享的野菜。",
+      "npcNames": ["George"],
+      "applicableTags": ["spring", "foraging", "general"],
+      "priority": 75
+    },
+    {
+      "key": "vincent_grape",
+      "qualifiedItemId": "(O)398",
+      "displayHint": "Vincent 分享的小零食，适合夏季、觅食或轻松对话。",
+      "npcNames": ["Vincent"],
+      "applicableTags": ["summer", "foraging", "playful"],
+      "priority": 70
+    },
+    {
+      "key": "wizard_void_essence",
+      "qualifiedItemId": "(O)769",
+      "displayHint": "Wizard 或 Krobus 针对怪物、矿洞和神秘现象给出的普通材料。",
+      "npcNames": ["Wizard", "Krobus"],
+      "applicableTags": ["combat", "mining", "magic"],
+      "priority": 85
+    },
+    {
+      "key": "sandy_cactus_fruit",
+      "qualifiedItemId": "(O)90",
+      "displayHint": "Sandy 针对沙漠旅行、炎热天气或觅食分享的当地果实。",
+      "npcNames": ["Sandy"],
+      "applicableTags": ["desert", "foraging", "summer"],
+      "priority": 85
+    },
+    {
+      "key": "leo_mango",
+      "qualifiedItemId": "(O)834",
+      "displayHint": "Leo 针对姜岛、自然或果树话题分享的普通水果。",
+      "npcNames": ["Leo"],
+      "applicableTags": ["island", "foraging", "farming"],
+      "priority": 85
+    }
+  ]
+}

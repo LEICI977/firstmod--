@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GamePath Condition="'$(GamePath)' == ''">E:\SteamLibrary\steamapps\common\Stardew Valley</GamePath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\ModConfig.cs" Link="Source\ModConfig.cs" />
+    <Compile Include="..\..\Models\MemoryModels.cs" Link="Source\MemoryModels.cs" />
+    <Compile Include="..\..\Models\VanillaInteractionModels.cs" Link="Source\VanillaInteractionModels.cs" />
+    <Compile Include="..\..\Models\NarrativeModels.cs" Link="Source\NarrativeModels.cs" />
+    <Compile Include="..\..\Models\StoryModels.cs" Link="Source\StoryModels.cs" />
+    <Compile Include="..\..\Models\SocialDirectorModels.cs" Link="Source\SocialDirectorModels.cs" />
+    <Compile Include="..\..\Models\SocialSceneModels.cs" Link="Source\SocialSceneModels.cs" />
+    <Compile Include="..\..\Models\SocialGiftModels.cs" Link="Source\SocialGiftModels.cs" />
+    <Compile Include="..\..\Models\ConversationGiftModels.cs" Link="Source\ConversationGiftModels.cs" />
+    <Compile Include="..\..\Models\ConversationContinuationModels.cs" Link="Source\ConversationContinuationModels.cs" />
+    <Compile Include="..\..\Models\OvernightMailModels.cs" Link="Source\OvernightMailModels.cs" />
+    <Compile Include="..\..\Models\LangGraphModels.cs" Link="Source\LangGraphModels.cs" />
+    <Compile Include="..\..\Models\GameBridgeModels.cs" Link="Source\GameBridgeModels.cs" />
+    <Compile Include="..\..\Services\ConversationEngine.cs" Link="Source\ConversationEngine.cs" />
+    <Compile Include="..\..\Services\NarrativeContextService.cs" Link="Source\NarrativeContextService.cs" />
+    <Compile Include="..\..\Services\DeepSeekClient.cs" Link="Source\DeepSeekClient.cs" />
+    <Compile Include="..\..\Services\AiProviderClient.cs" Link="Source\AiProviderClient.cs" />
+    <Compile Include="..\..\Services\PilotNarrativePlanner.cs" Link="Source\PilotNarrativePlanner.cs" />
+    <Compile Include="..\..\Services\NarrativeChoiceResolver.cs" Link="Source\NarrativeChoiceResolver.cs" />
+    <Compile Include="..\..\Services\ProactiveSceneService.cs" Link="Source\ProactiveSceneService.cs" />
+    <Compile Include="..\..\Services\StoryCatalog.cs" Link="Source\StoryCatalog.cs" />
+    <Compile Include="..\..\Services\DailySocialPlanner.cs" Link="Source\DailySocialPlanner.cs" />
+    <Compile Include="..\..\Services\AiSocialSceneService.cs" Link="Source\AiSocialSceneService.cs" />
+    <Compile Include="..\..\Services\GiftPolicyService.cs" Link="Source\GiftPolicyService.cs" />
+    <Compile Include="..\..\Services\NpcGiftToolService.cs" Link="Source\NpcGiftToolService.cs" />
+    <Compile Include="..\..\Services\OvernightMailPlannerService.cs" Link="Source\OvernightMailPlannerService.cs" />
+    <Compile Include="..\..\Services\GiftMailContentService.cs" Link="Source\GiftMailContentService.cs" />
+    <Compile Include="..\..\Services\ConversationSignalExtractor.cs" Link="Source\ConversationSignalExtractor.cs" />
+    <Compile Include="..\..\Services\LangGraphClient.cs" Link="Source\LangGraphClient.cs" />
+    <Compile Include="..\..\Services\ConversationOrchestrator.cs" Link="Source\ConversationOrchestrator.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="StardewModdingAPI" HintPath="$(GamePath)\StardewModdingAPI.dll" Private="true" />
+    <Reference Include="Stardew Valley" HintPath="$(GamePath)\Stardew Valley.dll" Private="true" />
+    <Reference Include="StardewValley.GameData" HintPath="$(GamePath)\StardewValley.GameData.dll" Private="true" />
+    <Reference Include="MonoGame.Framework" HintPath="$(GamePath)\MonoGame.Framework.dll" Private="true" />
+    <Reference Include="xTile" HintPath="$(GamePath)\xTile.dll" Private="true" />
+  </ItemGroup>
+</Project>

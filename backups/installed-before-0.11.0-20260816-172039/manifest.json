@@ -1,0 +1,9 @@
+{
+  "Name": "Stardew AI Memories",
+  "Author": "firstmod",
+  "Version": "0.10.0",
+  "Description": "Persistent AI conversations with live vanilla dialogue, story choice, gift, and game-state memory.",
+  "UniqueID": "firstmod.StardewAIMemories",
+  "EntryDll": "StardewAIMemories.dll",
+  "MinimumApiVersion": "4.0.0"
+}
