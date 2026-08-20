@@ -724,7 +724,7 @@ public sealed partial class ModEntry
         string actionId,
         string npcName,
         NpcSocialState npcState,
-        IReadOnlyCollection<string> relevantTags,
+        IReadOnlyCollection<string>? relevantTags = null,
         string deliveryMode = SocialGiftDeliveryModes.Immediate)
     {
         return new GiftPolicyContext
@@ -734,7 +734,7 @@ public sealed partial class ModEntry
             CurrentDay = Game1.Date.TotalDays,
             GiftAlreadyOfferedToday = npcState.LastGiftOfferDay == Game1.Date.TotalDays,
             CompletedActionIds = npcState.CompletedActionIds,
-            RelevantTags = relevantTags,
+            RelevantTags = relevantTags ?? Array.Empty<string>(),
             HeartLevel = Game1.player.getFriendshipHeartLevelForNPC(npcName),
             DeliveryMode = deliveryMode,
             RecentGifts = npcState.RecentGifts,
@@ -771,8 +771,7 @@ public sealed partial class ModEntry
         GiftPolicyContext context = CreateGiftPolicyContext(
             info.GiftActionId,
             info.NpcName,
-            npcState,
-            info.GiftRelevantTags);
+            npcState);
         SocialGiftSelectionResult selection = npcGiftToolService.ValidateCall(
             context,
             decision.ToolName,

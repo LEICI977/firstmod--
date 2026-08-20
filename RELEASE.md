@@ -20,6 +20,7 @@ VivantValley/
   assets/
     social/
       gift-pools.json
+      npc-personas.json
 ```
 
 不得包含 `config.json`、API Key、源代码、测试输出、备份目录或旧的 `StardewAIMemories.dll`。

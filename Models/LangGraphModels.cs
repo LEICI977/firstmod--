@@ -46,7 +46,6 @@ public sealed class LangGraphGiftCandidate
 {
     public string CandidateKey { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
-    public IReadOnlyList<string> MatchedTags { get; set; } = Array.Empty<string>();
     public string DisplayHint { get; set; } = string.Empty;
 }
 

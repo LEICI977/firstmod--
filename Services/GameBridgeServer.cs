@@ -23,7 +23,6 @@ public sealed class GameBridgeServer : IDisposable
     private readonly Func<GameBridgeToolRequest, Task<GameBridgeToolResult>> executor;
     private readonly CancellationTokenSource lifetime = new();
     private readonly string token = Guid.NewGuid().ToString("N");
-    private readonly Uri baseUri;
     private Task? listenerTask;
     private int disposed;
 
@@ -32,18 +31,25 @@ public sealed class GameBridgeServer : IDisposable
         int port = 8124)
     {
         this.executor = executor ?? throw new ArgumentNullException(nameof(executor));
-        if (port is < 1 or > 65535)
+        if (port is < 0 or > 65535)
             throw new ArgumentOutOfRangeException(nameof(port));
 
         listener = new TcpListener(IPAddress.Loopback, port);
-        baseUri = new Uri($"http://127.0.0.1:{port}/", UriKind.Absolute);
     }
 
-    public LangGraphBridgeAccess Access => new()
+    public LangGraphBridgeAccess Access
     {
-        BaseUrl = baseUri.ToString().TrimEnd('/'),
-        Token = token,
-    };
+        get
+        {
+            if (listener.LocalEndpoint is not IPEndPoint endpoint || endpoint.Port <= 0)
+                throw new InvalidOperationException("Game bridge is not listening.");
+            return new LangGraphBridgeAccess
+            {
+                BaseUrl = $"http://127.0.0.1:{endpoint.Port}",
+                Token = token,
+            };
+        }
+    }
 
     public void Start()
     {

@@ -115,32 +115,23 @@ public sealed class GiftPolicyService
         if (entries.Count == 0)
             return Blocked(SocialGiftRejectionReason.CatalogUnavailable);
 
-        var relevantTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "general" };
-        foreach (string? tag in context.RelevantTags ?? Array.Empty<string>())
-        {
-            if (!string.IsNullOrWhiteSpace(tag))
-                relevantTags.Add(tag.Trim());
-        }
-
-        var accepted = new List<RankedCandidate>();
+        var accepted = new List<(SocialGiftCandidate candidate, bool isNpcSpecific, int priority)>();
         var rejected = new List<SocialGiftCandidateRejection>();
         foreach (SocialGiftPoolEntry entry in entries)
         {
+            // 只检查：是否适合这个 NPC（专属礼物检查）
             bool npcSpecific = entry.NpcNames.Count > 0;
             if (npcSpecific && !entry.NpcNames.Contains(context.NpcName, StringComparer.OrdinalIgnoreCase))
                 continue;
 
-            string[] matchedTags = entry.ApplicableTags
-                .Where(relevantTags.Contains)
-                .OrderBy(tag => tag, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-            if (entry.ApplicableTags.Count > 0 && matchedTags.Length == 0)
-                continue;
+            // 通用礼物（npcNames 为空）总是包含
+            // 不再检查标签匹配，让 AI 根据对话上下文判断
 
+            // 检查冷却时间、好感度、物品有效性
             if (!TryCreateCandidate(
                     entry,
                     context,
-                    matchedTags,
+                    Array.Empty<string>(),  // 不传递 matchedTags，让 AI 自己判断
                     out SocialGiftCandidate? candidate,
                     out SocialGiftRejectionReason reason)
                 || candidate is null)
@@ -149,20 +140,17 @@ public sealed class GiftPolicyService
                 continue;
             }
 
-            accepted.Add(new RankedCandidate(
-                candidate,
-                npcSpecific ? 1 : 0,
-                matchedTags.Length,
-                entry.Priority));
+            accepted.Add((candidate, npcSpecific, entry.Priority));
         }
 
-        RankedCandidate[] ranked = accepted
-            .OrderByDescending(item => item.NpcSpecific)
-            .ThenByDescending(item => item.MatchedTagCount)
-            .ThenByDescending(item => item.Priority)
-            .ThenBy(item => item.Candidate.Key, StringComparer.Ordinal)
+        // 简单排序：NPC 专属优先，然后按优先级，最后按 key 字母排序保证稳定性
+        SocialGiftCandidate[] candidates = accepted
+            .OrderByDescending(item => item.isNpcSpecific)  // NPC 专属优先
+            .ThenByDescending(item => item.priority)  // 按 priority 排序
+            .ThenBy(item => item.candidate.Key, StringComparer.Ordinal)  // 字母排序保证稳定
+            .Take(options.MaximumCandidateCount)
+            .Select(item => item.candidate)
             .ToArray();
-        SocialGiftCandidate[] candidates = SelectBalancedCandidates(ranked, options.MaximumCandidateCount);
 
         return new SocialGiftCandidateSet
         {
@@ -172,6 +160,12 @@ public sealed class GiftPolicyService
                 ? SocialGiftRejectionReason.NoApplicableCandidates
                 : SocialGiftRejectionReason.None,
         };
+    }
+
+    private int GetEntryPriority(string key)
+    {
+        SocialGiftPoolEntry? entry = entries.FirstOrDefault(e => e.Key.Equals(key, StringComparison.Ordinal));
+        return entry?.Priority ?? 0;
     }
 
     /// <summary>

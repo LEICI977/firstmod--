@@ -65,13 +65,14 @@ def normalize_request(state: GraphState) -> GraphState:
 def build_initial_messages(request: dict[str, Any]) -> list[AnyMessage]:
     snapshot = request["contextSnapshot"]
     system_prompt = str(snapshot.get("systemPrompt", "")).strip()
-    system_prompt += "\n\nTool behavior: when a real gift is appropriate, call the provider tool " \
-        "give_gift with a candidate_key from allowed_tools. Never claim a gift was " \
-        "delivered before the tool result arrives. The tool result is authoritative. " \
-        "If the tool fails or is rejected, say so honestly. Do not expose item IDs, " \
-        "internal keys, JSON, or control syntax in the visible reply. If no tool is " \
-        "needed, return the final JSON schema directly: schema_version, decision, " \
-        "reply, and memory_update."
+    system_prompt += "\n\n【工具协议（只约束游戏事实）】\n" \
+        "- 只有在当前对话存在真实情感联结、候选礼物与上下文高度相关且不是应付玩家索要时，才考虑调用 give_gift。\n" \
+        "- 礼物必须从 allowed_tools 的候选中选择；参考候选的 displayName 和 displayHint，不要编造 candidate_key。\n" \
+        "- 玩家单纯索要物品不能触发送礼；宁可不送，也不要送无关或尴尬的礼物。\n" \
+        "- 决定送礼时先调用 give_gift，等待真实工具结果后再调用 submit_final_response；工具失败或拒绝时必须诚实反映。\n" \
+        "- 没有成功调用 give_gift 时，不得声称礼物已经交付，也不得承诺下次或改天送礼。\n" \
+        "- 可见回复不得暴露 candidate_key、物品 ID、JSON、工具名或控制语法。\n" \
+        "- 以上规则只说明游戏中实际发生的事实，不改变 NPC 的身份、专属人格、语气、价值观或与玩家的关系；最终回复必须仍像该 NPC 亲口说出。"
     user_payload = {
         "npc": {
             "name": snapshot.get("npcName"),
@@ -101,30 +102,77 @@ def build_initial_messages(request: dict[str, Any]) -> list[AnyMessage]:
 
 def provider_tool_definitions(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     candidates = snapshot.get("allowedTools") or []
-    if not isinstance(candidates, list) or not candidates:
-        return []
-    return [
-        {
+    definitions: list[dict[str, Any]] = []
+    if isinstance(candidates, list) and candidates:
+        definitions.append({
             "type": "function",
             "function": {
                 "name": "give_gift",
-                "description": "Deliver one allowlisted gift to the player now, if appropriate.",
+                "description": "当满足所有送礼条件时，向玩家当面交付一份预先筛选的礼物。调用此工具前，必须确认：1) 对话有真实情感联结 2) 礼物与上下文高度相关 3) 不是应付玩家索要。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "candidate_key": {
                             "type": "string",
-                            "description": "Opaque key from allowed_tools; never invent one.",
-                            "enum": [str(item.get("candidateKey", "")) for item in candidates if isinstance(item, dict)],
+                            "description": "从 allowed_tools 中选择最符合当前情境的礼物 key。务必查看每个候选的 displayName（礼物名称）和 displayHint（使用场景说明），选择与对话主题、玩家活动或 NPC 性格最相关的。绝不编造 key。",
+                            "enum": [
+                                str(item.get("candidateKey", ""))
+                                for item in candidates
+                                if isinstance(item, dict) and str(item.get("candidateKey", "")).strip()
+                            ],
                         },
-                        "reason_tag": {"type": "string"},
+                        "reason_tag": {"type": "string", "description": "简短的送礼原因标签，如 mining_topic、winter_care、friendship_milestone"},
                     },
                     "required": ["candidate_key"],
                     "additionalProperties": False,
                 },
             },
-        }
-    ]
+        })
+    definitions.append(final_response_tool_definition())
+    return definitions
+
+
+def final_response_tool_definition() -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": "submit_final_response",
+            "description": "提交 NPC 的最终对话和有界的记忆更新。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "schema_version": {"type": "integer", "enum": [1], "description": "架构版本，必须为 1"},
+                    "decision": {"type": "string", "enum": ["reply"], "description": "决策类型，必须为 reply"},
+                    "reply": {"type": "string", "minLength": 1, "description": "NPC 的对话文本，非空字符串"},
+                    "memory_update": {
+                        "type": "object",
+                        "description": "记忆更新对象",
+                        "properties": {
+                            "summary_patch": {"type": "string", "description": "本轮对话要点摘要"},
+                            "signal": {
+                                "type": "object",
+                                "description": "社交信号（所有值为数字）",
+                                "properties": {
+                                    "valence": {"type": "number", "description": "情感倾向 (-1 到 1，负面到正面)"},
+                                    "warmth": {"type": "number", "description": "温暖度 (0 到 1)"},
+                                    "concern": {"type": "number", "description": "关心度 (0 到 1)"},
+                                    "confidence": {"type": "number", "description": "自信度 (0 到 1)"},
+                                },
+                                "required": ["valence", "warmth", "concern", "confidence"],
+                                "additionalProperties": False,
+                            },
+                            "topics": {"type": "array", "items": {"type": "string"}, "description": "本轮讨论的主题（字符串数组）"},
+                            "open_loops": {"type": "array", "items": {"type": "string"}, "description": "未完成的话题或承诺（字符串数组）"},
+                        },
+                        "required": ["summary_patch", "signal", "topics", "open_loops"],
+                        "additionalProperties": False,
+                    },
+                },
+                "required": ["schema_version", "decision", "reply", "memory_update"],
+                "additionalProperties": False,
+            },
+        },
+    }
 
 
 def make_tools(request: dict[str, Any]) -> list[StructuredTool]:
@@ -159,32 +207,73 @@ def make_tools(request: dict[str, Any]) -> list[StructuredTool]:
 
 def choose_action(state: GraphState) -> GraphState:
     request = state["normalized"]
-    response = call_provider(
-        request,
-        state["messages"],
-        provider_tool_definitions(request["contextSnapshot"]),
-    )
-    message = response_to_ai_message(response)
-    tool_calls = list(message.tool_calls or [])
-    if len(tool_calls) > 1:
-        raise ValueError("at most one side-effecting tool call is allowed")
-    result: GraphState = {"messages": [message]}
-    if tool_calls:
-        call = tool_calls[0]
-        if not str(call.get("id", "")).strip():
-            raise ValueError("provider tool call is missing an ID")
-        result["tool_call"] = {
-            "id": str(call.get("id", "")),
-            "name": str(call.get("name", "")),
-            "args": call.get("args") or {},
-        }
-    else:
-        result["decision"] = parse_decision(extract_content(response))
-    return result
+    tools = provider_tool_definitions(request["contextSnapshot"])
+    messages = state["messages"]
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            response = call_provider(request, messages, tools)
+            message = response_to_ai_message(response)
+            tool_calls = list(message.tool_calls or [])
+            if not tool_calls:
+                if not str(message.content or "").strip():
+                    raise ValueError("provider returned neither text nor a conversation tool call")
+                return {"messages": [message]}
+            if len(tool_calls) > 1:
+                raise ValueError("provider returned multiple conversation tool calls")
+            call = tool_calls[0]
+            if not str(call.get("id", "")).strip():
+                raise ValueError("provider tool call is missing an ID")
+            tool_name = str(call.get("name", "")).strip().lower()
+            if tool_name not in {"give_gift", "submit_final_response"}:
+                raise ValueError(f"provider returned unknown conversation tool: {tool_name}")
+            args = call.get("args") or {}
+            if tool_name == "submit_final_response":
+                validate_final_response_args(args)
+            else:
+                validate_gift_args(args, request["contextSnapshot"])
+            result: GraphState = {
+                "messages": [message],
+                "tool_call": {
+                    "id": str(call.get("id", "")),
+                    "name": tool_name,
+                    "args": args,
+                },
+            }
+            if tool_name == "submit_final_response":
+                result["decision"] = args
+            return result
+        except (TypeError, ValueError) as error:
+            last_error = error
+            if attempt == 1:
+                return {
+                    "messages": [HumanMessage(
+                        content=(
+                            "工具选择协议连续无效，因此本轮不执行任何礼物或其他副作用。"
+                            "下一步只生成符合 NPC 人格的最终对话和记忆更新。"
+                        )
+                    )]
+                }
+            messages = list(state["messages"])
+            messages.append(HumanMessage(
+                content=(
+                    "协议纠正：如果本轮不需要送礼，可以直接输出自然的 NPC 对话文本，"
+                    "也可以调用一次 submit_final_response。只有确实送礼时才调用一次 give_gift。"
+                    "不得同时调用多个函数；函数参数必须是有效 JSON。"
+                )
+            ))
+    raise ValueError(f"provider action failed: {last_error}")
 
 
 def route_after_choice(state: GraphState) -> str:
-    return "tool_node" if state.get("tool_call") else "complete"
+    tool_name = str((state.get("tool_call") or {}).get("name", "")).strip().lower()
+    if not tool_name:
+        return "finalize"
+    if tool_name == "give_gift":
+        return "tool_node"
+    if tool_name == "submit_final_response":
+        return "complete"
+    raise ValueError("conversation tool call is missing a valid route")
 
 
 def capture_tool_result(state: GraphState) -> GraphState:
@@ -205,18 +294,94 @@ def finalize(state: GraphState) -> GraphState:
     request = state["normalized"]
     final_instruction = HumanMessage(
         content=(
-            "Generate the final NPC reply now. Return exactly one JSON object with "
-            "schema_version 1, decision 'reply', reply, and memory_update containing "
-            "summary_patch, signal (valence, warmth, concern, confidence), topics, "
-            "and open_loops. The reply must be natural dialogue only. Follow the "
-            "authoritative game tool result in the conversation and never invent a "
-            "successful delivery."
+            "现在通过调用 submit_final_response 生成 NPC 的最终回复。"
+            "使用 schema_version 1 和 decision 'reply'。继续严格遵循 SystemPrompt 中"
+            "当前 NPC 的专属人格、说话方式、价值观和关系边界；工具结果只约束实际发生的"
+            "游戏事实，不改变角色如何表达。回复必须是自然的第一人称对话文本，"
+            "遵循权威的工具执行结果，绝不要编造成功的交付或暴露工具协议。"
         )
     )
     messages = list(state["messages"])
     messages.append(final_instruction)
-    response = call_provider(request, messages, [], json_mode=True)
-    return {"decision": parse_decision(extract_content(response))}
+    tools = [final_response_tool_definition()]
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            response = call_provider(
+                request,
+                messages,
+                tools,
+                tool_choice={"type": "function", "function": {"name": "submit_final_response"}},
+            )
+            message = response_to_ai_message(response)
+            tool_calls = list(message.tool_calls or [])
+            if len(tool_calls) != 1:
+                raise ValueError("final provider response must contain one submit_final_response call")
+            call = tool_calls[0]
+            if str(call.get("name", "")).strip().lower() != "submit_final_response":
+                raise ValueError("final provider response returned the wrong function")
+            args = call.get("args") or {}
+            validate_final_response_args(args)
+            return {"decision": args}
+        except (TypeError, ValueError) as error:
+            last_error = error
+            if attempt == 1:
+                raise
+            messages = list(state["messages"])
+            messages.append(HumanMessage(
+                content=(
+                    "协议纠正：现在必须调用 submit_final_response。所有字段"
+                    "都是必需的，schema_version 必须是整数 1，decision 必须是"
+                    "reply，所有 signal 值必须是数字。"
+                )
+            ))
+    raise ValueError(f"provider final response failed: {last_error}")
+
+
+def validate_final_response_args(value: Any) -> None:
+    if not isinstance(value, dict):
+        raise ValueError("submit_final_response arguments must be an object")
+    if value.get("schema_version") != 1:
+        raise ValueError("submit_final_response schema_version must be integer 1")
+    if value.get("decision") != "reply":
+        raise ValueError("submit_final_response decision must be reply")
+    if not isinstance(value.get("reply"), str) or not value["reply"].strip():
+        raise ValueError("submit_final_response reply must be a non-empty string")
+    memory = value.get("memory_update")
+    if not isinstance(memory, dict):
+        raise ValueError("submit_final_response memory_update must be an object")
+    signal = memory.get("signal")
+    if not isinstance(signal, dict):
+        raise ValueError("submit_final_response signal must be an object")
+    for key in ("valence", "warmth", "concern", "confidence"):
+        number = signal.get(key)
+        if isinstance(number, bool) or not isinstance(number, (int, float)):
+            raise ValueError(f"submit_final_response signal.{key} must be numeric")
+    if not isinstance(memory.get("summary_patch"), str):
+        raise ValueError("submit_final_response summary_patch must be a string")
+    for key in ("topics", "open_loops"):
+        values = memory.get(key)
+        if not isinstance(values, list) or any(not isinstance(item, str) for item in values):
+            raise ValueError(f"submit_final_response {key} must be a string array")
+
+
+def validate_gift_args(value: Any, snapshot: dict[str, Any]) -> None:
+    if not isinstance(value, dict):
+        raise ValueError("give_gift arguments must be an object")
+    candidate_key = value.get("candidate_key")
+    if not isinstance(candidate_key, str) or not candidate_key.strip():
+        raise ValueError("give_gift candidate_key must be a non-empty string")
+    candidates = snapshot.get("allowedTools") or []
+    allowed_keys = {
+        str(candidate.get("candidateKey", "")).strip()
+        for candidate in candidates
+        if isinstance(candidate, dict) and str(candidate.get("candidateKey", "")).strip()
+    }
+    if candidate_key not in allowed_keys:
+        raise ValueError("give_gift candidate_key is outside the current allowlist")
+    reason_tag = value.get("reason_tag")
+    if reason_tag is not None and not isinstance(reason_tag, str):
+        raise ValueError("give_gift reason_tag must be a string")
 
 
 def normalize_final_output(state: GraphState) -> GraphState:
@@ -227,12 +392,12 @@ def normalize_final_output(state: GraphState) -> GraphState:
     execution = state.get("tool_execution") or {}
     tool_name = str(tool_call.get("name", "none")).strip().lower() if tool_call else "none"
     args = tool_call.get("args") or {}
-    candidate_key = args.get("candidate_key") if tool_call else None
+    candidate_key = args.get("candidate_key") if tool_name == "give_gift" else None
     action = {
-        "name": tool_name,
+        "name": tool_name if tool_name == "give_gift" else "none",
         "candidate_key": candidate_key,
         "delivery": "immediate",
-        "reason_tag": str(args.get("reason_tag", "")) if tool_call else "",
+        "reason_tag": str(args.get("reason_tag", "")) if tool_name == "give_gift" else "",
     }
     normalized = {
         "schema_version": int(decision.get("schema_version", 1)),
@@ -251,7 +416,7 @@ def normalize_final_output(state: GraphState) -> GraphState:
         raise ValueError("tool action requires candidate_key")
     if not normalized["reply"]:
         raise ValueError("reply is empty")
-    if tool_call and not execution:
+    if tool_name == "give_gift" and not execution:
         raise ValueError("tool call is missing execution result")
     return {"decision": normalized}
 
@@ -286,7 +451,11 @@ def build_graph(request: dict[str, Any]):
     graph.add_conditional_edges(
         "choose_action",
         route_after_choice,
-        {"tool_node": "tool_node", "complete": "normalize_final_output"},
+        {
+            "tool_node": "tool_node",
+            "finalize": "finalize",
+            "complete": "normalize_final_output",
+        },
     )
     graph.add_edge("tool_node", "capture_tool_result")
     graph.add_edge("capture_tool_result", "finalize")
@@ -300,6 +469,7 @@ def call_provider(
     messages: list[AnyMessage],
     tools: list[dict[str, Any]],
     json_mode: bool = False,
+    tool_choice: Any = None,
 ) -> dict[str, Any]:
     llm = request["llm"]
     provider = str(llm.get("provider", "DeepSeek")).strip().lower()
@@ -314,7 +484,7 @@ def call_provider(
     }
     if tools:
         payload["tools"] = tools
-        payload["tool_choice"] = "auto"
+        payload["tool_choice"] = "auto" if tool_choice is None else tool_choice
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
     max_tokens = max(128, min(int(llm.get("maxOutputTokens", 4096)), 32768))
@@ -323,7 +493,8 @@ def call_provider(
     else:
         payload["max_tokens"] = max_tokens
         payload["thinking"] = {"type": "enabled" if llm.get("enableThinking") else "disabled"}
-        payload["reasoning_effort"] = str(llm.get("reasoningEffort", "low"))
+        if llm.get("enableThinking"):
+            payload["reasoning_effort"] = str(llm.get("reasoningEffort", "low"))
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request_obj = urllib.request.Request(
         endpoint,
@@ -393,9 +564,11 @@ def response_to_ai_message(response: dict[str, Any]) -> AIMessage:
             args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
         except json.JSONDecodeError as error:
             raise ValueError("provider returned invalid tool arguments") from error
+        if not isinstance(args, dict):
+            raise ValueError("provider tool arguments must be an object")
         tool_calls.append({
             "name": str(function.get("name", "")),
-            "args": args if isinstance(args, dict) else {},
+            "args": args,
             "id": str(raw_call.get("id", "")),
             "type": "tool_call",
         })

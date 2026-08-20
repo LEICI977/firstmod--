@@ -22,6 +22,7 @@ public sealed partial class ModEntry : Mod
 
     private ModConfig config = null!;
     private GameContextBuilder contextBuilder = null!;
+    private NpcPersonaCatalog npcPersonaCatalog = NpcPersonaCatalog.Empty;
     private readonly NarrativeContextService narrativeContextService = new();
     private IDeepSeekClient deepSeekClient = null!;
     private HttpClient aiHttpClient = null!;
@@ -53,7 +54,11 @@ public sealed partial class ModEntry : Mod
         config = helper.ReadConfig<ModConfig>();
         NormalizeConfig();
         bool migratedAiSettings = NormalizeAiSettings();
-        contextBuilder = new GameContextBuilder(config);
+        npcPersonaCatalog = NpcPersonaCatalog.LoadFromFile(
+            Path.Combine(helper.DirectoryPath, "assets", "social", "npc-personas.json"));
+        foreach (string issue in npcPersonaCatalog.Issues)
+            Monitor.Log($"NPC persona catalog: {issue}", LogLevel.Warn);
+        contextBuilder = new GameContextBuilder(config, npcPersonaCatalog);
         LoadStartupApiKey();
         aiHttpClient = new HttpClient
         {
@@ -80,8 +85,24 @@ public sealed partial class ModEntry : Mod
         catch (Exception exception)
         {
             gameBridgeServer?.Dispose();
-            gameBridgeServer = null;
-            Monitor.Log($"LangGraph game bridge failed to start: {exception.Message}", LogLevel.Error);
+            try
+            {
+                gameBridgeServer = new GameBridgeServer(EnqueueGameBridgeToolAsync, port: 0);
+                gameBridgeServer.Start();
+                Monitor.Log(
+                    $"Configured LangGraph bridge port {config.LangGraphBridgePort} was unavailable ({exception.Message}); "
+                    + $"using {gameBridgeServer.Access.BaseUrl} instead.",
+                    LogLevel.Warn);
+            }
+            catch (Exception fallbackException)
+            {
+                gameBridgeServer?.Dispose();
+                gameBridgeServer = null;
+                Monitor.Log(
+                    $"LangGraph game bridge failed to start: {exception.Message}; "
+                    + $"dynamic-port fallback also failed: {fallbackException.Message}",
+                    LogLevel.Error);
+            }
         }
         conversationOrchestrator = new ConversationOrchestrator(
             langGraphClient,
@@ -588,7 +609,6 @@ public sealed partial class ModEntry : Mod
         string gameDate = $"{Game1.Date} {Game1.timeOfDay}";
         string giftActionId = string.Empty;
         IReadOnlyList<SocialGiftCandidate> giftCandidates = Array.Empty<SocialGiftCandidate>();
-        IReadOnlyList<string> giftRelevantTags = Array.Empty<string>();
         string activitySummary = string.Empty;
         if (Context.IsMainPlayer && config.EnableSocialDirector)
         {
@@ -598,13 +618,11 @@ public sealed partial class ModEntry : Mod
                 Game1.Date.TotalDays,
                 npcName,
                 memory.TotalTurns + 1);
-            giftRelevantTags = BuildRelevantSocialTags(socialPlayer, npcSocialState);
             activitySummary = activityJournal.BuildPromptSummary(socialPlayer, Game1.Date.TotalDays);
             GiftPolicyContext giftContext = CreateGiftPolicyContext(
                 giftActionId,
                 npcName,
-                npcSocialState,
-                giftRelevantTags);
+                npcSocialState);
             SocialGiftCandidateSet giftSet = giftPolicyService.BuildCandidateSet(giftContext);
             giftCandidates = giftSet.Candidates;
             Monitor.Log(
@@ -623,17 +641,24 @@ public sealed partial class ModEntry : Mod
             RecentMessagesToKeep = config.SummaryKeepRecentMessages,
         };
 
+        string personaSummary = npcPersonaCatalog.TryGet(npcName, out NpcPersonaProfile? persona)
+            && persona is not null
+                ? persona.ToPrompt(npcDisplayName)
+                : $"{npcDisplayName} 的专属人格资料未配置；只使用当前 SystemPrompt 中已经明确的角色事实，不要套用其他 NPC 的性格。";
+
         var graphSnapshot = new NpcContextSnapshot
         {
             SchemaVersion = 1,
             NpcName = npcName,
             NpcDisplayName = npcDisplayName,
             Identity = $"{npcDisplayName} ({npcName})",
-            Personality = "详见 systemPrompt 中的 NPC 基础性格资料。",
+            Personality = personaSummary,
             Memory = memory.Summary ?? string.Empty,
             Mood = string.IsNullOrWhiteSpace(activitySummary) ? "未记录" : activitySummary,
-            Relationship = "详见 systemPrompt 中的关系与好感事实。",
-            Goal = "自然回应玩家并遵守当前游戏事实。",
+            Relationship = memory.TotalTurns == 0
+                ? "与玩家的 AI 私人对话尚未建立；关系与好感事实以 SystemPrompt 为准。"
+                : $"已经与玩家完成 {memory.TotalTurns} 轮 AI 私人对话；关系与好感事实以 SystemPrompt 为准。",
+            Goal = $"以 {npcDisplayName} 的专属人格自然回应玩家，先服从实时游戏事实，再决定是否使用工具。",
             WorldState = $"地点：{Game1.currentLocation?.NameOrUniqueName ?? string.Empty}；日期：{Game1.Date.TotalDays}",
             PlayerProgress = "详见 systemPrompt 中的玩家进度事实。",
             SystemPrompt = snapshot.SystemPrompt,
@@ -653,7 +678,6 @@ public sealed partial class ModEntry : Mod
             {
                 CandidateKey = gift.Key,
                 DisplayName = gift.DisplayName,
-                MatchedTags = gift.MatchedTags,
                 DisplayHint = gift.DisplayHint,
             }).ToArray(),
             PlayerInput = userText,
@@ -685,7 +709,6 @@ public sealed partial class ModEntry : Mod
             activitySummary,
             giftActionId,
             giftCandidates,
-            giftRelevantTags,
             graphSnapshot,
             graphRequestId);
         state.PendingInfo = pendingInfo;
@@ -2939,7 +2962,6 @@ public sealed partial class ModEntry : Mod
         string ActivitySummary,
         string GiftActionId,
         IReadOnlyList<SocialGiftCandidate> GiftCandidates,
-        IReadOnlyList<string> GiftRelevantTags,
         NpcContextSnapshot GraphSnapshot,
         string GraphRequestId);
 

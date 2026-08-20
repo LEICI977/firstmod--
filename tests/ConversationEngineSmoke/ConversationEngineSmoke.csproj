@@ -38,6 +38,7 @@
     <Compile Include="..\..\Services\ConversationSignalExtractor.cs" Link="Source\ConversationSignalExtractor.cs" />
     <Compile Include="..\..\Services\LangGraphClient.cs" Link="Source\LangGraphClient.cs" />
     <Compile Include="..\..\Services\ConversationOrchestrator.cs" Link="Source\ConversationOrchestrator.cs" />
+    <Compile Include="..\..\Services\GameBridgeServer.cs" Link="Source\GameBridgeServer.cs" />
   </ItemGroup>
 
   <ItemGroup>

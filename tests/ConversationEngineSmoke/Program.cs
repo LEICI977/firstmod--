@@ -4,6 +4,13 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 
+await TestGameBridgeDynamicPortsAsync();
+if (args.Contains("--game-bridge-only", StringComparer.OrdinalIgnoreCase))
+{
+    Console.WriteLine("Game bridge dynamic-port smoke test passed.");
+    return;
+}
+
 TestAiBaseUrlResolution();
 await TestAiProviderPayloadsAsync();
 await TestOpenAiStreamingAdapterAsync();
@@ -47,6 +54,24 @@ if (args.Contains("--langgraph-live", StringComparer.OrdinalIgnoreCase))
     await TestLiveLangGraphTransportAsync();
 
 Console.WriteLine("Conversation engine smoke tests passed.");
+
+static async Task TestGameBridgeDynamicPortsAsync()
+{
+    static Task<GameBridgeToolResult> Execute(GameBridgeToolRequest request)
+        => Task.FromResult(new GameBridgeToolResult { RequestId = request.RequestId, Ok = true });
+
+    using var first = new GameBridgeServer(Execute, port: 0);
+    using var second = new GameBridgeServer(Execute, port: 0);
+    first.Start();
+    second.Start();
+
+    Assert(first.Access.BaseUrl != second.Access.BaseUrl, "Dynamic game bridges selected the same port.");
+    using var httpClient = new HttpClient();
+    string firstHealth = await httpClient.GetStringAsync(first.Access.BaseUrl + "/health");
+    string secondHealth = await httpClient.GetStringAsync(second.Access.BaseUrl + "/health");
+    Assert(firstHealth.Contains("\"bridge\":\"smapi\"", StringComparison.Ordinal), "First bridge health check failed.");
+    Assert(secondHealth.Contains("\"bridge\":\"smapi\"", StringComparison.Ordinal), "Second bridge health check failed.");
+}
 
 static async Task TestLiveLangGraphTransportAsync()
 {
