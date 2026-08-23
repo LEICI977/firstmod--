@@ -329,6 +329,7 @@ public sealed partial class ModEntry
         }
 
         memory.Messages.Add(message);
+        memory.Messages = ConversationMemoryPolicy.KeepRecentConversationTurns(memory.Messages);
         memory.LastDate = message.GameDate;
         memoryDirty = true;
         PersistMemory(force: false);
@@ -485,19 +486,31 @@ public sealed partial class ModEntry
     private NpcGameSnapshot BuildNpcGameSnapshot(NPC npc, string? playerId = null)
     {
         NpcGameSnapshot snapshot = contextBuilder.Build(npc);
+        string resolvedPlayerId = playerId ?? GetPlayerId();
+        NpcConversationMemory? conversationMemory = memoryStore.TryGet(
+            resolvedPlayerId,
+            npc.Name,
+            out NpcConversationMemory? existingMemory)
+            ? existingMemory
+            : null;
+        IReadOnlyList<string> sessionFacts = conversationSessionMemory.BuildPromptFacts(
+            resolvedPlayerId,
+            npc.Name,
+            conversationMemory?.TotalTurns ?? 0);
         string narrativeContext = narrativeContextService.Build(
-            memoryStore.GetNarrativeEpisodes(playerId ?? GetPlayerId()),
+            memoryStore.GetNarrativeEpisodes(resolvedPlayerId),
             npc.Name,
             config.MaxCompleteNarrativeEpisodesInContext,
             config.MaxNarrativeEpisodeAnchorsInContext,
             config.MaxNarrativeContextCharacters);
-        if (narrativeContext.Length == 0)
-            return snapshot;
 
         return snapshot with
         {
-            SystemPrompt = snapshot.SystemPrompt.TrimEnd() + "\n\n" + narrativeContext,
+            SystemPrompt = narrativeContext.Length == 0
+                ? snapshot.SystemPrompt
+                : snapshot.SystemPrompt.TrimEnd() + "\n\n" + narrativeContext,
             NarrativeContext = narrativeContext,
+            RecentSessionFacts = sessionFacts,
         };
     }
 

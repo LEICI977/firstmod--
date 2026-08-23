@@ -71,6 +71,9 @@ public sealed partial class ModEntry
         if (!Context.IsWorldReady || !Context.IsMainPlayer)
             return;
 
+        conversationSessionMemory.Clear();
+        npcCombatStateService.OnDayStarted();
+        PersistNpcCombatState();
         FinishCompletedSignalAnalyses();
         EnsureTodaySocialPlan(persistImmediately: true);
         overnightMailAttemptedPlanId = string.Empty;

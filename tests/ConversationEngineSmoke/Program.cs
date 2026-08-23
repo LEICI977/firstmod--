@@ -4,10 +4,20 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 
+TestConversationActionIntentPolicy();
+TestConversationMemoryPolicy();
+TestConversationSessionMemoryStore();
 await TestGameBridgeDynamicPortsAsync();
 if (args.Contains("--game-bridge-only", StringComparer.OrdinalIgnoreCase))
 {
     Console.WriteLine("Game bridge dynamic-port smoke test passed.");
+    return;
+}
+if (args.Contains("--langgraph-contract-only", StringComparer.OrdinalIgnoreCase))
+{
+    TestLangGraphDecisionValidation();
+    await TestLangGraphClientContractAsync();
+    Console.WriteLine("LangGraph C# contract smoke tests passed.");
     return;
 }
 
@@ -54,6 +64,138 @@ if (args.Contains("--langgraph-live", StringComparer.OrdinalIgnoreCase))
     await TestLiveLangGraphTransportAsync();
 
 Console.WriteLine("Conversation engine smoke tests passed.");
+
+static void TestConversationMemoryPolicy()
+{
+    string existing = string.Join('\n', Enumerable.Range(0, 10)
+        .Select(index => $"[Y1 spring {index + 1}] 旧记忆{index}: {new string('甲', 230)}"));
+    string updated = ConversationMemoryPolicy.UpdateLongTermMemory(
+        existing,
+        "玩家明确说以后想和 Abigail 再去一次矿洞。",
+        "Y1 summer 3 1420",
+        "player-1",
+        "Abigail",
+        21);
+    Assert(
+        updated.Length <= ConversationMemoryPolicy.MaximumLongTermCharacters,
+        "Long-term memory exceeded its 2000-character bound.");
+    Assert(
+        updated.Contains("[Y1 summer 3 1420] 玩家明确说以后想和 Abigail 再去一次矿洞。", StringComparison.Ordinal),
+        "The newest dated memory was lost while pruning older entries.");
+
+    string recall = ConversationMemoryPolicy.BuildRandomRecall(
+        updated,
+        "player-1",
+        "Abigail",
+        "Y1 summer 4 900",
+        22);
+    string repeatedRecall = ConversationMemoryPolicy.BuildRandomRecall(
+        updated,
+        "player-1",
+        "Abigail",
+        "Y1 summer 4 900",
+        22);
+    Assert(recall == repeatedRecall, "Recall changed while retrying the same conversation.");
+    Assert(
+        recall.Length <= ConversationMemoryPolicy.MaximumRecallCharacters
+        && recall.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length
+        <= ConversationMemoryPolicy.MaximumRecallEntries,
+        "Random recall exceeded its prompt budget.");
+    Assert(
+        recall.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .All(entry => entry.StartsWith("[", StringComparison.Ordinal)),
+        "A recalled memory was injected without a date.");
+
+    var messages = new List<ConversationMemoryMessage>();
+    for (int turn = 0; turn < 20; turn++)
+    {
+        messages.Add(new ConversationMemoryMessage
+        {
+            Role = "user",
+            Content = $"user-{turn}",
+            Source = ConversationMemorySources.AiChat,
+        });
+        messages.Add(new ConversationMemoryMessage
+        {
+            Role = "assistant",
+            Content = $"assistant-{turn}",
+            Source = ConversationMemorySources.AiChat,
+        });
+        messages.Add(new ConversationMemoryMessage
+        {
+            Role = "system",
+            Content = $"tool-{turn}",
+            Source = ConversationMemorySources.ModAction,
+        });
+    }
+
+    List<ConversationMemoryMessage> recent = ConversationMemoryPolicy.KeepRecentConversationTurns(messages);
+    Assert(
+        recent.Count(message => message.Source == ConversationMemorySources.AiChat && message.Role == "user") == 16,
+        "Recent memory did not retain exactly 16 complete AI turns.");
+    Assert(recent[0].Content == "user-4" && recent[^1].Content == "tool-19",
+        "Recent memory split a turn or discarded its authoritative tool result.");
+}
+
+static void TestConversationSessionMemoryStore()
+{
+    var store = new ConversationSessionMemoryStore();
+    var destination = new ConversationMoveDestination
+    {
+        Key = "location:beach",
+        DisplayName = "海滩",
+        StartLocationName = "Town",
+        TargetLocationName = "Beach",
+    };
+
+    store.StartMove("player-1", "Haley", "Y1 春 1日 1200", destination);
+    IReadOnlyList<string> traveling = store.BuildPromptFacts("player-1", "Haley", 0);
+    Assert(traveling.Count == 1 && traveling[0].Contains("正在和玩家一起前往 海滩", StringComparison.Ordinal),
+        "Session memory did not retain an active shared destination.");
+
+    store.MarkArrived("player-1", "Haley", destination);
+    IReadOnlyList<string> arrived = store.BuildPromptFacts("player-1", "Haley", 0);
+    Assert(arrived.Count == 1 && arrived[0].Contains("已经和玩家一起到达过 海滩", StringComparison.Ordinal),
+        "Session memory did not update the shared destination after arrival.");
+    store.EndMove("player-1", "Haley", destination);
+    Assert(store.BuildPromptFacts("player-1", "Haley", 1).Count == 1,
+        "Ending a completed trip discarded the destination fact too early.");
+
+    Assert(store.BuildPromptFacts("player-1", "Haley", 7).Count == 1,
+        "Session memory expired before eight conversation turns.");
+    Assert(store.BuildPromptFacts("player-1", "Haley", 8).Count == 0,
+        "Session memory exceeded its eight-turn retention window.");
+
+    store.StartMove("player-1", "Haley", "Y1 春 1日 1300", destination);
+    store.EndMove("player-1", "Haley", destination);
+    Assert(store.BuildPromptFacts("player-1", "Haley", 8).Count == 0,
+        "Cancelled travel left a false temporary destination fact.");
+}
+
+static void TestConversationActionIntentPolicy()
+{
+    Assert(ConversationActionIntentPolicy.IsDirectGiftRequest("给我一个礼物。"),
+        "A direct Chinese gift request was not blocked.");
+    Assert(ConversationActionIntentPolicy.IsDirectGiftRequest("Could you give me a present?"),
+        "A direct English gift request was not blocked.");
+    Assert(ConversationActionIntentPolicy.IsDirectGiftRequest("我想要一杯咖啡。", new[] { "咖啡" }),
+        "A request for a specific allowlisted item was not blocked.");
+    Assert(ConversationActionIntentPolicy.IsDirectGiftRequest("I want coffee.", new[] { "Coffee" }),
+        "An English request for a specific allowlisted item was not blocked.");
+    Assert(!ConversationActionIntentPolicy.IsDirectGiftRequest("我今天收到了一份礼物。"),
+        "A normal gift topic was mistaken for a request.");
+
+    Assert(ConversationActionIntentPolicy.IsDirectMoveCommand("你现在就去海边。"),
+        "A direct Chinese movement command was not blocked.");
+    Assert(ConversationActionIntentPolicy.IsDirectMoveCommand("Go to the beach."),
+        "A direct English movement command was not blocked.");
+    Assert(!ConversationActionIntentPolicy.IsDirectMoveCommand("要不要一起去海边？"),
+        "A genuine Chinese invitation was mistaken for a command.");
+    Assert(!ConversationActionIntentPolicy.IsDirectMoveCommand("Would you go to the beach with me?"),
+        "A genuine English invitation was mistaken for a command.");
+    Assert(!ConversationActionIntentPolicy.IsDirectMoveCommand("你去过海边吗？"),
+        "A question about past travel was mistaken for a command.");
+}
 
 static async Task TestGameBridgeDynamicPortsAsync()
 {
@@ -127,6 +269,10 @@ static void TestLangGraphDecisionValidation()
         {
             new LangGraphGiftCandidate { CandidateKey = "abigail_quartz", DisplayName = "Quartz" },
         },
+        AllowedMoveDestinations = new[]
+        {
+            new LangGraphMoveDestination { DestinationKey = "location:beach", DisplayName = "Beach" },
+        },
     };
     var validator = new DecisionValidator();
     LangGraphDecision decision = validator.Validate(
@@ -155,6 +301,34 @@ static void TestLangGraphDecisionValidation()
     Assert(decision.Action.CandidateKey == "abigail_quartz", "Graph candidate was not retained.");
     Assert(decision.MemoryUpdate.Signal.Valence == 1d, "Signal valence was not bounded.");
     Assert(decision.MemoryUpdate.Signal.Warmth == 0d, "Signal warmth was not bounded.");
+
+    LangGraphDecision moveDecision = validator.Validate(
+        new LangGraphResponse
+        {
+            RequestId = "req-1",
+            ContextVersion = "ctx-1",
+            Decision = new LangGraphDecision
+            {
+                Action = new LangGraphAction
+                {
+                    Name = NpcMoveToolNames.MoveTo,
+                    DestinationKey = "location:beach",
+                },
+                Reply = "那就去海边吧。",
+                TravelBarks = new List<string>
+                {
+                    "慢一点，我就在你后面。",
+                    "这条路今天看起来和平时不太一样。",
+                    "到了海边，我想先听一会儿浪声。",
+                    "这一句应该被数量上限移除。",
+                },
+            },
+        },
+        snapshot,
+        1200,
+        "req-1");
+    Assert(moveDecision.Action.DestinationKey == "location:beach", "Graph move destination was not retained.");
+    Assert(moveDecision.TravelBarks.Count == 3, "Travel barks were not bounded to three lines.");
 
     bool rejected = false;
     try
@@ -194,6 +368,34 @@ static void TestLangGraphDecisionValidation()
                 ContextVersion = "ctx-1",
                 Decision = new LangGraphDecision
                 {
+                    Action = new LangGraphAction
+                    {
+                        Name = NpcMoveToolNames.MoveTo,
+                        DestinationKey = "location:secret-map",
+                    },
+                    Reply = "reply",
+                },
+            },
+            snapshot,
+            1200,
+            "req-1");
+    }
+    catch (LangGraphValidationException)
+    {
+        rejected = true;
+    }
+    Assert(rejected, "Validator accepted a destination outside the allowlist.");
+
+    rejected = false;
+    try
+    {
+        validator.Validate(
+            new LangGraphResponse
+            {
+                RequestId = "req-1",
+                ContextVersion = "ctx-1",
+                Decision = new LangGraphDecision
+                {
                     Reply = "{\"tool\":\"none\"}",
                 },
             },
@@ -210,13 +412,14 @@ static void TestLangGraphDecisionValidation()
 
 static async Task TestLangGraphClientContractAsync()
 {
-    using var httpClient = new HttpClient(new RecordingHttpHandler(() => new HttpResponseMessage(HttpStatusCode.OK)
+    var decisionHandler = new RecordingHttpHandler(() => new HttpResponseMessage(HttpStatusCode.OK)
     {
         Content = new StringContent(
             "{\"requestId\":\"req-1\",\"contextVersion\":\"ctx-1\",\"decision\":{\"schema_version\":1,\"decision\":\"reply\",\"action\":{\"name\":\"none\",\"candidate_key\":null,\"delivery\":\"immediate\",\"reason_tag\":\"\"},\"reply\":\"hello\",\"memory_update\":{\"summary_patch\":\"\",\"signal\":{},\"topics\":[],\"open_loops\":[]}}}",
             Encoding.UTF8,
             "application/json"),
-    }));
+    });
+    using var httpClient = new HttpClient(decisionHandler);
     var client = new LangGraphClient(httpClient, "http://127.0.0.1:8123", TimeSpan.FromSeconds(10));
     LangGraphResponse response = await client.DecideAsync(new LangGraphRequest
     {
@@ -224,7 +427,60 @@ static async Task TestLangGraphClientContractAsync()
         ContextVersion = "ctx-1",
         ContextSnapshot = new NpcContextSnapshot { ContextVersion = "ctx-1" },
     });
-    Assert(response.Decision.Reply == "hello", "LangGraph client failed to deserialize the response.");
+    Assert(response.Decision?.Reply == "hello", "LangGraph client failed to deserialize the response.");
+    Assert(
+        decisionHandler.Requests.Single().Uri.AbsolutePath == "/v1/graph/decision",
+        "LangGraph decision used the wrong endpoint.");
+
+    var confirmationHandler = new RecordingHttpHandler(() => new HttpResponseMessage(HttpStatusCode.OK)
+    {
+        Content = new StringContent(
+            "{\"requestId\":\"req-move\",\"contextVersion\":\"ctx-move\",\"confirmation\":{\"kind\":\"move_confirmation\",\"resume_token\":\"resume-secret\",\"tool_call_id\":\"call-move\",\"destination_key\":\"location:beach\",\"display_name\":\"Beach\",\"npc_display_name\":\"Haley\"}}",
+            Encoding.UTF8,
+            "application/json"),
+    });
+    using var confirmationHttpClient = new HttpClient(confirmationHandler);
+    var confirmationClient = new LangGraphClient(
+        confirmationHttpClient,
+        "http://127.0.0.1:8123",
+        TimeSpan.FromSeconds(10));
+    LangGraphResponse confirmationResponse = await confirmationClient.DecideAsync(new LangGraphRequest
+    {
+        RequestId = "req-move",
+        ContextVersion = "ctx-move",
+        ContextSnapshot = new NpcContextSnapshot { ContextVersion = "ctx-move" },
+    });
+    Assert(confirmationResponse.Decision is null, "Confirmation response unexpectedly contained a decision.");
+    Assert(
+        confirmationResponse.Confirmation?.DestinationKey == "location:beach"
+        && confirmationResponse.Confirmation.ResumeToken == "resume-secret",
+        "LangGraph client failed to deserialize move confirmation.");
+
+    var resumeHandler = new RecordingHttpHandler(() => new HttpResponseMessage(HttpStatusCode.OK)
+    {
+        Content = new StringContent(
+            "{\"requestId\":\"req-move\",\"contextVersion\":\"ctx-move\",\"decision\":{\"schema_version\":1,\"decision\":\"reply\",\"action\":{\"name\":\"move_to\",\"destination_key\":\"location:beach\",\"delivery\":\"immediate\",\"reason_tag\":\"accepted\"},\"reply\":\"走吧。\",\"travel_barks\":[\"我跟着你。\"],\"memory_update\":{\"summary_patch\":\"\",\"signal\":{},\"topics\":[],\"open_loops\":[]}}}",
+            Encoding.UTF8,
+            "application/json"),
+    });
+    using var resumeHttpClient = new HttpClient(resumeHandler);
+    var resumeClient = new LangGraphClient(resumeHttpClient, "http://127.0.0.1:8123", TimeSpan.FromSeconds(10));
+    LangGraphResponse resumed = await resumeClient.ResumeMoveAsync(new LangGraphResumeRequest
+    {
+        RequestId = "req-move",
+        ResumeToken = "resume-secret",
+        Approved = true,
+    });
+    Assert(resumed.Decision?.Action.Name == NpcMoveToolNames.MoveTo, "Resume response wasn't deserialized.");
+    Assert(resumed.Decision?.TravelBarks.Single() == "我跟着你。", "Travel barks were not deserialized.");
+    CapturedHttpRequest resumeRequest = resumeHandler.Requests.Single();
+    Assert(resumeRequest.Uri.AbsolutePath == "/v1/graph/confirm", "Move resume used the wrong endpoint.");
+    using JsonDocument resumeBody = JsonDocument.Parse(resumeRequest.Body);
+    Assert(
+        resumeBody.RootElement.GetProperty("requestId").GetString() == "req-move"
+        && resumeBody.RootElement.GetProperty("resumeToken").GetString() == "resume-secret"
+        && resumeBody.RootElement.GetProperty("approved").GetBoolean(),
+        "Move resume payload did not preserve confirmation data.");
 }
 
 static void TestAiBaseUrlResolution()

@@ -17,11 +17,16 @@
     <Compile Include="..\..\Models\SocialSceneModels.cs" Link="Source\SocialSceneModels.cs" />
     <Compile Include="..\..\Models\SocialGiftModels.cs" Link="Source\SocialGiftModels.cs" />
     <Compile Include="..\..\Models\ConversationGiftModels.cs" Link="Source\ConversationGiftModels.cs" />
+    <Compile Include="..\..\Models\ConversationMoveModels.cs" Link="Source\ConversationMoveModels.cs" />
+    <Compile Include="..\..\Models\ConversationMineGuardModels.cs" Link="Source\ConversationMineGuardModels.cs" />
     <Compile Include="..\..\Models\ConversationContinuationModels.cs" Link="Source\ConversationContinuationModels.cs" />
     <Compile Include="..\..\Models\OvernightMailModels.cs" Link="Source\OvernightMailModels.cs" />
     <Compile Include="..\..\Models\LangGraphModels.cs" Link="Source\LangGraphModels.cs" />
     <Compile Include="..\..\Models\GameBridgeModels.cs" Link="Source\GameBridgeModels.cs" />
     <Compile Include="..\..\Services\ConversationEngine.cs" Link="Source\ConversationEngine.cs" />
+    <Compile Include="..\..\Services\ConversationActionIntentPolicy.cs" Link="Source\ConversationActionIntentPolicy.cs" />
+    <Compile Include="..\..\Services\ConversationMemoryPolicy.cs" Link="Source\ConversationMemoryPolicy.cs" />
+    <Compile Include="..\..\Services\ConversationSessionMemoryStore.cs" Link="Source\ConversationSessionMemoryStore.cs" />
     <Compile Include="..\..\Services\NarrativeContextService.cs" Link="Source\NarrativeContextService.cs" />
     <Compile Include="..\..\Services\DeepSeekClient.cs" Link="Source\DeepSeekClient.cs" />
     <Compile Include="..\..\Services\AiProviderClient.cs" Link="Source\AiProviderClient.cs" />

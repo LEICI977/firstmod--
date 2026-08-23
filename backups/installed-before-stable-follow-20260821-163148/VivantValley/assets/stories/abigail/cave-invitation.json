@@ -1,0 +1,65 @@
+{
+  "id": "abigail.cave-invitation.02a",
+  "version": 1,
+  "npc": "Abigail",
+  "priority": 90,
+  "enabled": true,
+  "repeatable": false,
+  "trigger": {
+    "minHearts": 2,
+    "minConversationTurns": 1,
+    "delayDays": 2,
+    "expiryDays": 6,
+    "cooldownDays": 0,
+    "requiredFlags": ["abigail.arc.route-adventure"],
+    "forbiddenFlags": ["abigail.arc.middle-complete", "abigail.arc.complete"]
+  },
+  "scene": {
+    "startTime": 1200,
+    "endTime": 2400,
+    "activationDistanceTiles": 8.0,
+    "giftItemId": "",
+    "aiBrief": "Abigail因为玩家认真珍惜石英而更愿意袒露想法。她主动提出以后一起去矿洞探险，并坦白自己既期待又有一点紧张。她想知道玩家会选择大胆并肩前进，还是认真做好准备再出发。",
+    "fallbackText": "你真的把那块石英留着了啊……那我也该认真一点。下次去矿洞时，要不要和我一起？我不是害怕，只是觉得两个人的话，也许能走得更远。你会直接往前冲，还是先把退路都准备好？",
+    "acceptText": "一起去",
+    "deferText": "改天再说"
+  },
+  "choices": [
+    {
+      "id": "bold",
+      "text": "和你一起的话，我愿意往深处走",
+      "memoryText": "我答应和Abigail并肩冒险，也愿意陪她向矿洞深处走。",
+      "receiveGift": false,
+      "defer": false,
+      "nextStoryId": "abigail.starlight-promise.03",
+      "effects": {
+        "trust": 2,
+        "affection": 4,
+        "setFlags": ["abigail.arc.middle-complete", "abigail.arc.answer-bold"]
+      }
+    },
+    {
+      "id": "careful",
+      "text": "先准备周全，我想让你平安回来",
+      "memoryText": "我答应陪Abigail冒险，但更认真地告诉她，我希望我们都能平安回来。",
+      "receiveGift": false,
+      "defer": false,
+      "nextStoryId": "abigail.starlight-promise.03",
+      "effects": {
+        "trust": 4,
+        "affection": 2,
+        "setFlags": ["abigail.arc.middle-complete", "abigail.arc.answer-careful"]
+      }
+    },
+    {
+      "id": "defer",
+      "text": "让我想想，改天回答你",
+      "memoryText": "我请Abigail给我一点时间考虑。",
+      "receiveGift": false,
+      "defer": true,
+      "nextStoryId": "",
+      "effects": {"trust": 0, "affection": 0, "setFlags": []}
+    }
+  ],
+  "acceptEffects": {"trust": 0, "affection": 0, "setFlags": []}
+}

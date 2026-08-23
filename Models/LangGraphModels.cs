@@ -18,12 +18,18 @@ public sealed class NpcContextSnapshot
     public string PlayerProgress { get; set; } = string.Empty;
     public string SystemPrompt { get; set; } = string.Empty;
     public string MemorySummary { get; set; } = string.Empty;
+    /// <summary>Short-lived, game-confirmed shared experiences kept outside long-term memory.</summary>
+    public IReadOnlyList<string> RecentSessionFacts { get; set; }
+        = Array.Empty<string>();
     public IReadOnlyList<LangGraphConversationMessage> RecentMessages { get; set; }
         = Array.Empty<LangGraphConversationMessage>();
     public string NarrativeContext { get; set; } = string.Empty;
     public string ActivitySummary { get; set; } = string.Empty;
     public IReadOnlyList<LangGraphGiftCandidate> AllowedTools { get; set; }
         = Array.Empty<LangGraphGiftCandidate>();
+    public IReadOnlyList<LangGraphMoveDestination> AllowedMoveDestinations { get; set; }
+        = Array.Empty<LangGraphMoveDestination>();
+    public bool MineGuardAvailable { get; set; }
     public string PlayerInput { get; set; } = string.Empty;
     public string PlayerId { get; set; } = string.Empty;
     public int Day { get; set; }
@@ -47,6 +53,12 @@ public sealed class LangGraphGiftCandidate
     public string CandidateKey { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
     public string DisplayHint { get; set; } = string.Empty;
+}
+
+public sealed class LangGraphMoveDestination
+{
+    public string DestinationKey { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
 }
 
 /// <summary>Provider settings forwarded to the local graph service for one request.</summary>
@@ -84,6 +96,9 @@ public sealed class LangGraphDecision
     public LangGraphAction Action { get; set; } = new();
     public string Reply { get; set; } = string.Empty;
 
+    [JsonPropertyName("travel_barks")]
+    public List<string> TravelBarks { get; set; } = new();
+
     [JsonPropertyName("memory_update")]
     public LangGraphMemoryUpdate MemoryUpdate { get; set; } = new();
 }
@@ -94,6 +109,9 @@ public sealed class LangGraphAction
 
     [JsonPropertyName("candidate_key")]
     public string? CandidateKey { get; set; }
+
+    [JsonPropertyName("destination_key")]
+    public string? DestinationKey { get; set; }
     public string Delivery { get; set; } = SocialGiftDeliveryModes.Immediate;
 
     [JsonPropertyName("reason_tag")]
@@ -123,10 +141,41 @@ public sealed class LangGraphResponse
 {
     public string RequestId { get; set; } = string.Empty;
     public string ContextVersion { get; set; } = string.Empty;
-    public LangGraphDecision Decision { get; set; } = new();
+    public LangGraphDecision? Decision { get; set; }
+
+    public LangGraphMoveConfirmation? Confirmation { get; set; }
 
     [JsonPropertyName("tool_execution")]
     public LangGraphToolExecution? ToolExecution { get; set; }
+}
+
+public sealed class LangGraphMoveConfirmation
+{
+    public string Kind { get; set; } = string.Empty;
+
+    [JsonPropertyName("resume_token")]
+    public string ResumeToken { get; set; } = string.Empty;
+
+    [JsonPropertyName("tool_call_id")]
+    public string ToolCallId { get; set; } = string.Empty;
+
+    [JsonPropertyName("destination_key")]
+    public string DestinationKey { get; set; } = string.Empty;
+
+    [JsonPropertyName("display_name")]
+    public string DisplayName { get; set; } = string.Empty;
+
+    [JsonPropertyName("npc_display_name")]
+    public string NpcDisplayName { get; set; } = string.Empty;
+}
+
+public sealed class LangGraphResumeRequest
+{
+    public string RequestId { get; set; } = string.Empty;
+
+    public string ResumeToken { get; set; } = string.Empty;
+
+    public bool Approved { get; set; }
 }
 
 public sealed class LangGraphToolExecution
@@ -145,6 +194,9 @@ public sealed class LangGraphToolExecution
 
     [JsonPropertyName("candidate_key")]
     public string? CandidateKey { get; set; }
+
+    [JsonPropertyName("destination_key")]
+    public string? DestinationKey { get; set; }
 
     public string? DisplayName { get; set; }
 

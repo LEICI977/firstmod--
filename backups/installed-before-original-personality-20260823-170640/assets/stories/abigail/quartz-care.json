@@ -1,0 +1,65 @@
+{
+  "id": "abigail.quartz-care.01",
+  "version": 2,
+  "npc": "Abigail",
+  "priority": 100,
+  "enabled": true,
+  "repeatable": false,
+  "trigger": {
+    "minHearts": 2,
+    "minConversationTurns": 1,
+    "delayDays": 1,
+    "expiryDays": 5,
+    "cooldownDays": 5,
+    "requiredFlags": [],
+    "forbiddenFlags": ["abigail.arc.complete"]
+  },
+  "scene": {
+    "startTime": 900,
+    "endTime": 2400,
+    "activationDistanceTiles": 8.0,
+    "giftItemId": "(O)80",
+    "aiBrief": "Abigail记得玩家最近说过的话。她特意走过来关心玩家，并送出一块自己挑过的石英。她努力装得随意，但其实很在意玩家会怎样回应。台词需要自然地给玩家留下认真回应或轻松打趣她的空间。",
+    "fallbackText": "上次你说的那些话，我后来一直记着。今天看到这块石英时，不知道为什么就想到了你……拿着吧。先说好，我只是觉得它待在你那里会更合适。\n\n（{NpcDisplayName}把一份{GiftDisplayName}递到你面前。）",
+    "acceptText": "收下{GiftDisplayName}",
+    "deferText": "改天再说"
+  },
+  "choices": [
+    {
+      "id": "cherish",
+      "text": "收下，并说会好好珍惜",
+      "memoryText": "我认真收下了石英，并告诉Abigail我会好好珍惜。",
+      "receiveGift": true,
+      "defer": false,
+      "nextStoryId": "abigail.cave-invitation.02a",
+      "effects": {
+        "trust": 2,
+        "affection": 4,
+        "setFlags": ["abigail.arc.crystal-resolved", "abigail.arc.route-adventure"]
+      }
+    },
+    {
+      "id": "tease",
+      "text": "收下，笑着问她是不是特意挑的",
+      "memoryText": "我收下石英，笑着追问Abigail是不是特意为我挑的。",
+      "receiveGift": true,
+      "defer": false,
+      "nextStoryId": "abigail.rainy-challenge.02b",
+      "effects": {
+        "trust": 3,
+        "affection": 2,
+        "setFlags": ["abigail.arc.crystal-resolved", "abigail.arc.route-playful"]
+      }
+    },
+    {
+      "id": "defer",
+      "text": "现在不方便，改天再聊",
+      "memoryText": "我请Abigail改天再来。",
+      "receiveGift": false,
+      "defer": true,
+      "nextStoryId": "",
+      "effects": {"trust": 0, "affection": 0, "setFlags": []}
+    }
+  ],
+  "acceptEffects": {"trust": 0, "affection": 0, "setFlags": []}
+}

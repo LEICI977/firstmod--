@@ -53,6 +53,26 @@ public sealed class ConversationOrchestrator
         };
         return client.DecideAsync(request, cancellationToken);
     }
+
+    public Task<LangGraphResponse> ResumeMoveAsync(
+        string requestId,
+        string resumeToken,
+        bool approved,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(requestId))
+            throw new ArgumentException("requestId cannot be empty.", nameof(requestId));
+        if (string.IsNullOrWhiteSpace(resumeToken))
+            throw new ArgumentException("resumeToken cannot be empty.", nameof(resumeToken));
+        return client.ResumeMoveAsync(
+            new LangGraphResumeRequest
+            {
+                RequestId = requestId.Trim(),
+                ResumeToken = resumeToken.Trim(),
+                Approved = approved,
+            },
+            cancellationToken);
+    }
 }
 
 /// <summary>Validates untrusted graph output before any game-side action is executed.</summary>
@@ -88,20 +108,38 @@ public sealed class DecisionValidator
         LangGraphAction action = decision.Action ?? new LangGraphAction();
         action.Name = NormalizeAction(action.Name);
         action.CandidateKey = NormalizeOptional(action.CandidateKey, 128);
+        action.DestinationKey = NormalizeOptional(action.DestinationKey, 128);
         action.Delivery = NormalizeOptional(action.Delivery, 32) ?? SocialGiftDeliveryModes.Immediate;
         action.ReasonTag = NormalizeOptional(action.ReasonTag, 64) ?? string.Empty;
-        if (action.Name is not (NpcGiftToolNames.None or NpcGiftToolNames.GiveGift or NpcGiftToolNames.MailGift))
+        if (action.Name is not (
+                NpcGiftToolNames.None
+                or NpcGiftToolNames.GiveGift
+                or NpcGiftToolNames.MailGift
+                or NpcMoveToolNames.MoveTo
+                or NpcMineGuardToolNames.InviteMineGuard))
             throw new LangGraphValidationException("Graph returned an unknown tool name.");
-        if (action.Name == NpcGiftToolNames.None && action.CandidateKey is not null)
-            throw new LangGraphValidationException("none action cannot contain a candidate key.");
-        if (action.Name != NpcGiftToolNames.None && action.CandidateKey is null)
-            throw new LangGraphValidationException("Gift action is missing candidate key.");
+        bool isGiftAction = action.Name is NpcGiftToolNames.GiveGift or NpcGiftToolNames.MailGift;
+        bool isMoveAction = action.Name == NpcMoveToolNames.MoveTo;
+        bool isMineGuardAction = action.Name == NpcMineGuardToolNames.InviteMineGuard;
+        if (action.Name == NpcGiftToolNames.None
+            && (action.CandidateKey is not null || action.DestinationKey is not null))
+        {
+            throw new LangGraphValidationException("none action cannot contain a tool argument key.");
+        }
+        if (isGiftAction && (action.CandidateKey is null || action.DestinationKey is not null))
+            throw new LangGraphValidationException("Gift action has invalid argument keys.");
+        if (isMoveAction && (action.DestinationKey is null || action.CandidateKey is not null))
+            throw new LangGraphValidationException("move_to action has invalid argument keys.");
+        if (isMineGuardAction && (action.CandidateKey is not null || action.DestinationKey is not null))
+            throw new LangGraphValidationException("invite_mine_guard action has invalid argument keys.");
         if (!action.Delivery.Equals(SocialGiftDeliveryModes.Immediate, StringComparison.Ordinal)
             && !action.Delivery.Equals(SocialGiftDeliveryModes.Mail, StringComparison.Ordinal))
         {
             throw new LangGraphValidationException("Graph returned an unknown delivery mode.");
         }
-        if (action.Name != NpcGiftToolNames.None
+        if (isMineGuardAction && !action.Delivery.Equals(SocialGiftDeliveryModes.Immediate, StringComparison.Ordinal))
+            throw new LangGraphValidationException("invite_mine_guard cannot use mail delivery.");
+        if (isGiftAction
             && !(requestSnapshot.AllowedTools ?? Array.Empty<LangGraphGiftCandidate>()).Any(candidate => string.Equals(
                 candidate.CandidateKey,
                 action.CandidateKey,
@@ -109,6 +147,14 @@ public sealed class DecisionValidator
         {
             throw new LangGraphValidationException("Graph selected a candidate outside the current allowlist.");
         }
+        if (isMoveAction
+            && !(requestSnapshot.AllowedMoveDestinations ?? Array.Empty<LangGraphMoveDestination>()).Any(destination =>
+                string.Equals(destination.DestinationKey, action.DestinationKey, StringComparison.Ordinal)))
+        {
+            throw new LangGraphValidationException("Graph selected a destination outside the current allowlist.");
+        }
+        if (isMineGuardAction && !requestSnapshot.MineGuardAvailable)
+            throw new LangGraphValidationException("Graph selected mine guard while it is unavailable.");
 
         decision.Reply = NormalizeReply(decision.Reply, maximumReplyCharacters);
         if (decision.Reply.Length == 0)
@@ -116,8 +162,16 @@ public sealed class DecisionValidator
         if (ContainsForbiddenReplyContent(decision.Reply))
             throw new LangGraphValidationException("Graph reply contains JSON, tool syntax, or game control characters.");
 
+        decision.TravelBarks = isMoveAction
+            ? NormalizeTokens(decision.TravelBarks, 3, 120)
+            : new List<string>();
+        if (decision.TravelBarks.Any(ContainsForbiddenReplyContent))
+            throw new LangGraphValidationException("Graph travel bark contains JSON, tool syntax, or game control characters.");
+
         LangGraphMemoryUpdate update = decision.MemoryUpdate ?? new LangGraphMemoryUpdate();
-        update.SummaryPatch = LimitSingleLine(update.SummaryPatch, 1800);
+        update.SummaryPatch = LimitSingleLine(
+            update.SummaryPatch,
+            ConversationMemoryPolicy.MaximumMemoryEntryCharacters);
         update.Topics = NormalizeTokens(update.Topics, ConversationSignal.MaxTopics, 64);
         update.OpenLoops = NormalizeTokens(update.OpenLoops, ConversationSignal.MaxOpenLoops, 96);
         update.Signal ??= new LangGraphSignal();
@@ -210,6 +264,8 @@ public sealed class ToolRegistry
         NpcGiftToolNames.None,
         NpcGiftToolNames.GiveGift,
         NpcGiftToolNames.MailGift,
+        NpcMoveToolNames.MoveTo,
+        NpcMineGuardToolNames.InviteMineGuard,
     };
 
     public bool Contains(string? name)

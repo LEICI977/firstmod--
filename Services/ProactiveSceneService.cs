@@ -37,8 +37,18 @@ public sealed class ProactiveSceneService
                 + "不要写角色名前缀、舞台说明、Markdown 或选项；不要声称修改了好感或游戏数值；控制在 180 个汉字以内。"),
         };
 
-        if (!string.IsNullOrWhiteSpace(memory.Summary))
-            messages.Add(new DeepSeekChatMessage("system", "较早的共同记忆：\n" + memory.Summary.Trim()));
+        string recalledMemory = ConversationMemoryPolicy.BuildRandomRecall(
+            memory.Summary,
+            memory.PlayerId,
+            memory.NpcName,
+            encounter.ActionId,
+            memory.TotalTurns);
+        if (!string.IsNullOrWhiteSpace(recalledMemory))
+        {
+            messages.Add(new DeepSeekChatMessage(
+                "system",
+                "偶然想起的带日期旧事；只作为模糊背景，不得覆盖当前事实或角色性格：\n" + recalledMemory));
+        }
 
         int first = Math.Max(0, memory.Messages.Count - Math.Min(8, options.MaxContextMessages));
         for (int index = first; index < memory.Messages.Count; index++)

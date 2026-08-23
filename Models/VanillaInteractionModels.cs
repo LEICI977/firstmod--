@@ -8,6 +8,7 @@ public static class ConversationMemorySources
     public const string VanillaGift = "vanilla_gift";
     public const string VanillaEvent = "vanilla_event";
     public const string ModGift = "mod_gift";
+    public const string ModAction = "mod_action";
     public const string ModProactive = "mod_proactive";
     public const string ModSocial = "mod_social";
     public const string ModMail = "mod_mail";

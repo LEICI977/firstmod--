@@ -29,6 +29,8 @@ public sealed class GameBridgeToolRequest
 
     public string CandidateKey { get; set; } = string.Empty;
 
+    public string DestinationKey { get; set; } = string.Empty;
+
     public string ReasonTag { get; set; } = string.Empty;
 }
 
@@ -49,6 +51,9 @@ public sealed class GameBridgeToolResult
 
     [JsonPropertyName("candidate_key")]
     public string? CandidateKey { get; set; }
+
+    [JsonPropertyName("destination_key")]
+    public string? DestinationKey { get; set; }
 
     public string? DisplayName { get; set; }
 

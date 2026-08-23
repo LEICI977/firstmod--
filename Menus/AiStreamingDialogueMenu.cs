@@ -29,7 +29,11 @@ public sealed class AiStreamingDialogueMenu : IClickableMenu
     private bool completed;
     private bool failed;
     private bool closed;
+    private bool awaitingMoveConfirmation;
     private string errorText = string.Empty;
+    private string moveConfirmationText = string.Empty;
+    private Action? onApproveMove;
+    private Action? onDeclineMove;
 
     public AiStreamingDialogueMenu(
         string npcName,
@@ -48,9 +52,54 @@ public sealed class AiStreamingDialogueMenu : IClickableMenu
         Reposition();
     }
 
-    public bool IsGenerating => !completed && !failed && !closed;
+    public bool IsGenerating => !completed && !failed && !closed && !awaitingMoveConfirmation;
 
     public bool CanContinue => completed && !failed && !closed;
+
+    public bool IsAwaitingMoveConfirmation => awaitingMoveConfirmation && !closed;
+
+    public void SetActionConfirmation(
+        string confirmationText,
+        Action onApprove,
+        Action onDecline)
+    {
+        if (closed)
+            return;
+
+        content.Clear();
+        completed = false;
+        failed = false;
+        errorText = string.Empty;
+        awaitingMoveConfirmation = true;
+        moveConfirmationText = string.IsNullOrWhiteSpace(confirmationText)
+            ? "Confirm this action?"
+            : confirmationText.Trim();
+        onApproveMove = onApprove ?? throw new ArgumentNullException(nameof(onApprove));
+        onDeclineMove = onDecline ?? throw new ArgumentNullException(nameof(onDecline));
+        firstVisibleLine = 0;
+        Game1.playSound("smallSelect");
+    }
+
+    public void SetMoveConfirmation(
+        string npcDisplayName,
+        string destinationDisplayName,
+        Action onApprove,
+        Action onDecline)
+    {
+        if (closed)
+            return;
+
+        content.Clear();
+        completed = false;
+        failed = false;
+        errorText = string.Empty;
+        awaitingMoveConfirmation = true;
+        moveConfirmationText = $"和{npcDisplayName}一起去{destinationDisplayName}吗？你来带路。";
+        onApproveMove = onApprove ?? throw new ArgumentNullException(nameof(onApprove));
+        onDeclineMove = onDecline ?? throw new ArgumentNullException(nameof(onDecline));
+        firstVisibleLine = 0;
+        Game1.playSound("smallSelect");
+    }
 
     public void AppendChunk(DeepSeekStreamChunk chunk)
     {
@@ -77,6 +126,8 @@ public sealed class AiStreamingDialogueMenu : IClickableMenu
         content.Append(normalized);
         completed = true;
         failed = false;
+        awaitingMoveConfirmation = false;
+        ClearMoveCallbacks();
         firstVisibleLine = 0;
         Game1.playSound("smallSelect");
     }
@@ -88,6 +139,8 @@ public sealed class AiStreamingDialogueMenu : IClickableMenu
 
         failed = true;
         completed = false;
+        awaitingMoveConfirmation = false;
+        ClearMoveCallbacks();
         errorText = string.IsNullOrWhiteSpace(message) ? "AI 请求失败。" : message.Trim();
         firstVisibleLine = 0;
         Game1.playSound("cancel");
@@ -108,7 +161,18 @@ public sealed class AiStreamingDialogueMenu : IClickableMenu
     {
         if (key == Keys.Escape)
         {
+            if (IsAwaitingMoveConfirmation)
+            {
+                ResolveMoveConfirmation(approved: false);
+                return;
+            }
             Close(cancelRequest: IsGenerating);
+            return;
+        }
+
+        if (IsAwaitingMoveConfirmation && key is Keys.Enter or Keys.Space)
+        {
+            ResolveMoveConfirmation(approved: true);
             return;
         }
 
@@ -131,7 +195,18 @@ public sealed class AiStreamingDialogueMenu : IClickableMenu
     {
         if (button == Buttons.B)
         {
+            if (IsAwaitingMoveConfirmation)
+            {
+                ResolveMoveConfirmation(approved: false);
+                return;
+            }
             Close(cancelRequest: IsGenerating);
+            return;
+        }
+
+        if (IsAwaitingMoveConfirmation && button == Buttons.A)
+        {
+            ResolveMoveConfirmation(approved: true);
             return;
         }
 
@@ -152,6 +227,15 @@ public sealed class AiStreamingDialogueMenu : IClickableMenu
 
     public override void receiveLeftClick(int x, int y, bool playSound = true)
     {
+        if (IsAwaitingMoveConfirmation)
+        {
+            if (continueButton.containsPoint(x, y))
+                ResolveMoveConfirmation(approved: true);
+            else if (closeButton.containsPoint(x, y))
+                ResolveMoveConfirmation(approved: false);
+            return;
+        }
+
         if (CanContinue && continueButton.containsPoint(x, y))
         {
             ContinueConversation();
@@ -174,7 +258,9 @@ public sealed class AiStreamingDialogueMenu : IClickableMenu
 
     public override void performHoverAction(int x, int y)
     {
-        continueButton.scale = CanContinue && continueButton.containsPoint(x, y) ? 1.04f : 1f;
+        continueButton.scale = (CanContinue || IsAwaitingMoveConfirmation) && continueButton.containsPoint(x, y)
+            ? 1.04f
+            : 1f;
         closeButton.scale = closeButton.containsPoint(x, y) ? 1.04f : 1f;
     }
 
@@ -196,9 +282,13 @@ public sealed class AiStreamingDialogueMenu : IClickableMenu
         if (!closed)
         {
             bool shouldCancel = IsGenerating;
+            Action? declineMove = IsAwaitingMoveConfirmation ? onDeclineMove : null;
             closed = true;
+            awaitingMoveConfirmation = false;
+            ClearMoveCallbacks();
             if (shouldCancel)
                 onCancel();
+            declineMove?.Invoke();
             onClosed();
         }
 
@@ -307,6 +397,8 @@ public sealed class AiStreamingDialogueMenu : IClickableMenu
 
         string source = failed
             ? errorText
+            : IsAwaitingMoveConfirmation
+                ? moveConfirmationText
             : content.Length > 0
                 ? content.ToString()
                 : GetWaitingText();
@@ -324,6 +416,8 @@ public sealed class AiStreamingDialogueMenu : IClickableMenu
     {
         if (failed)
             return "失败";
+        if (IsAwaitingMoveConfirmation)
+            return "等待确认";
         if (completed)
             return "完成";
         if (content.Length > 0)
@@ -335,6 +429,13 @@ public sealed class AiStreamingDialogueMenu : IClickableMenu
 
     private void DrawActionButtons(SpriteBatch b)
     {
+        if (IsAwaitingMoveConfirmation)
+        {
+            DrawActionButton(b, continueButton, "出发");
+            DrawActionButton(b, closeButton, "暂不");
+            return;
+        }
+
         if (CanContinue)
             DrawActionButton(b, continueButton, "继续");
 
@@ -368,6 +469,29 @@ public sealed class AiStreamingDialogueMenu : IClickableMenu
         if (ReferenceEquals(Game1.activeClickableMenu, this))
             exitThisMenuNoSound();
         onContinue();
+    }
+
+    private void ResolveMoveConfirmation(bool approved)
+    {
+        if (!IsAwaitingMoveConfirmation)
+            return;
+
+        Action? callback = approved ? onApproveMove : onDeclineMove;
+        awaitingMoveConfirmation = false;
+        moveConfirmationText = string.Empty;
+        content.Clear();
+        completed = false;
+        failed = false;
+        firstVisibleLine = 0;
+        ClearMoveCallbacks();
+        Game1.playSound(approved ? "smallSelect" : "bigDeSelect");
+        callback?.Invoke();
+    }
+
+    private void ClearMoveCallbacks()
+    {
+        onApproveMove = null;
+        onDeclineMove = null;
     }
 
     private void Close(bool cancelRequest)

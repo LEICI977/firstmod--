@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Collections.Concurrent;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 using VivantValley.Menus;
 using VivantValley.Patches;
 using VivantValley.Services;
@@ -19,10 +20,10 @@ public sealed partial class ModEntry : Mod
     private const string SaveDataKey = "npc-memories";
     private const string NarrativeSaveDataKey = "npc-narrative-state-v1";
     private const string GeneratedDialogueKey = "firstmod.StardewAIMemories.GeneratedDialogue";
+    private const string CombatSaveDataKey = "npc-combat-state-v1";
 
     private ModConfig config = null!;
     private GameContextBuilder contextBuilder = null!;
-    private NpcPersonaCatalog npcPersonaCatalog = NpcPersonaCatalog.Empty;
     private readonly NarrativeContextService narrativeContextService = new();
     private IDeepSeekClient deepSeekClient = null!;
     private HttpClient aiHttpClient = null!;
@@ -35,11 +36,15 @@ public sealed partial class ModEntry : Mod
     private readonly ConcurrentQueue<GameBridgeWorkItem> gameBridgeWorkItems = new();
     private readonly Dictionary<string, GameBridgeReceipt> gameBridgeReceipts = new(StringComparer.Ordinal);
     private readonly DecisionValidator decisionValidator = new();
+    private NpcCombatStateService npcCombatStateService = null!;
+    private NpcMoveToolService npcMoveToolService = null!;
+    private NpcMineGuardService npcMineGuardService = null!;
     private ProactiveSceneService proactiveSceneService = null!;
     private readonly PilotNarrativePlanner pilotNarrativePlanner = new();
     private readonly NarrativeChoiceResolver narrativeChoiceResolver = new();
     private StoryCatalog storyCatalog = StoryCatalog.Empty;
     private ConversationMemoryStore memoryStore = new();
+    private readonly ConversationSessionMemoryStore conversationSessionMemory = new();
     private NarrativeSaveStore narrativeStore = new();
     private readonly PerScreen<ConversationScreenState> screenStates = new(() => new ConversationScreenState());
 
@@ -51,14 +56,17 @@ public sealed partial class ModEntry : Mod
 
     public override void Entry(IModHelper helper)
     {
+        npcCombatStateService = new NpcCombatStateService(Monitor);
+        npcCombatStateService.Defeated += OnNpcDefeated;
+        npcMoveToolService = new NpcMoveToolService(
+            Monitor,
+            npcCombatStateService,
+            conversationSessionMemory);
+        npcMineGuardService = new NpcMineGuardService(Monitor, npcCombatStateService);
         config = helper.ReadConfig<ModConfig>();
         NormalizeConfig();
         bool migratedAiSettings = NormalizeAiSettings();
-        npcPersonaCatalog = NpcPersonaCatalog.LoadFromFile(
-            Path.Combine(helper.DirectoryPath, "assets", "social", "npc-personas.json"));
-        foreach (string issue in npcPersonaCatalog.Issues)
-            Monitor.Log($"NPC persona catalog: {issue}", LogLevel.Warn);
-        contextBuilder = new GameContextBuilder(config, npcPersonaCatalog);
+        contextBuilder = new GameContextBuilder(config, npcCombatStateService);
         LoadStartupApiKey();
         aiHttpClient = new HttpClient
         {
@@ -139,6 +147,7 @@ public sealed partial class ModEntry : Mod
         helper.Events.GameLoop.TimeChanged += OnTimeChanged;
         helper.Events.Content.AssetRequested += OnAssetRequested;
         helper.Events.Display.MenuChanged += OnMenuChanged;
+        helper.Events.Display.RenderedWorld += OnRenderedWorld;
 
         helper.ConsoleCommands.Add(
             "vivant_settings",
@@ -194,6 +203,9 @@ public sealed partial class ModEntry : Mod
 
     private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
     {
+        conversationSessionMemory.Clear();
+        npcMoveToolService.CancelAll("save_loaded");
+        npcMineGuardService.CancelAll("save_loaded");
         ConversationScreenState state = screenStates.Value;
         CancelPendingConversation(state);
         CancelPendingSocialScene(state, retryToday: false);
@@ -203,6 +215,22 @@ public sealed partial class ModEntry : Mod
 
         if (Context.IsMainPlayer)
         {
+            try
+            {
+                npcCombatStateService.Load(
+                    Helper.Data.ReadSaveData<NpcCombatStateStore>(CombatSaveDataKey)
+                    ?? new NpcCombatStateStore());
+                npcCombatStateService.EnsureAllDefaultWeapons();
+                npcCombatStateService.InitializeDefaultWeaponsForWorld();
+                npcCombatStateService.OnDayStarted();
+                npcCombatStateService.Update();
+            }
+            catch (Exception ex)
+            {
+                npcCombatStateService.Load(new NpcCombatStateStore());
+                Monitor.Log($"Failed to load NPC combat state; using empty state: {ex}", LogLevel.Error);
+            }
+
             memoryDirty = false;
             socialDirty = false;
             try
@@ -210,6 +238,8 @@ public sealed partial class ModEntry : Mod
                 memoryStore = Helper.Data.ReadSaveData<ConversationMemoryStore>(SaveDataKey)
                     ?? new ConversationMemoryStore();
                 memoryStore.Normalize();
+                if (NormalizeConversationMemoryRetention())
+                    memoryDirty = true;
             }
             catch (Exception ex)
             {
@@ -237,6 +267,7 @@ public sealed partial class ModEntry : Mod
         }
         else if (!Context.IsSplitScreen)
         {
+            npcCombatStateService.Reset();
             memoryStore = new ConversationMemoryStore();
             socialStore = new SocialDirectorSaveStore();
             memoryDirty = false;
@@ -277,6 +308,7 @@ public sealed partial class ModEntry : Mod
         RefreshVanillaEventLifecycle();
         FinishCompletedSignalAnalyses();
         PersistMemory(force: true);
+        PersistNpcCombatState();
         PersistSocial(force: true);
     }
 
@@ -291,6 +323,9 @@ public sealed partial class ModEntry : Mod
 
     private void OnDayEnding(object? sender, DayEndingEventArgs e)
     {
+        conversationSessionMemory.Clear();
+        npcMoveToolService.CancelAll("day_ending");
+        npcMineGuardService.CancelAll("day_ending");
         CompleteActiveVanillaEvent("day_ending");
         overnightMailDeliveryReadyDay = -1;
         foreach (ConversationScreenState state in screenStates.GetActiveValues().Select(pair => pair.Value))
@@ -305,6 +340,7 @@ public sealed partial class ModEntry : Mod
         FinishCompletedSignalAnalyses();
         PrepareOvernightMailPlan();
         TryStartOvernightMailPlan();
+        PersistNpcCombatState();
         PersistSocial(force: true);
     }
 
@@ -330,6 +366,9 @@ public sealed partial class ModEntry : Mod
 
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
     {
+        conversationSessionMemory.Clear();
+        npcMoveToolService.CancelAll("returned_to_title");
+        npcMineGuardService.CancelAll("returned_to_title");
         foreach (ConversationScreenState state in screenStates.GetActiveValues().Select(pair => pair.Value))
         {
             CancelPendingConversation(state);
@@ -342,6 +381,7 @@ public sealed partial class ModEntry : Mod
         ResetVanillaInteractionTracking();
         screenStates.ResetAllScreens();
         memoryStore = new ConversationMemoryStore();
+        npcCombatStateService.Reset();
         socialStore = new SocialDirectorSaveStore();
         InvalidateGiftMailAsset();
         memoryDirty = false;
@@ -355,6 +395,11 @@ public sealed partial class ModEntry : Mod
         if (!Context.IsWorldReady)
             return;
 
+        npcMoveToolService.Update();
+        npcMineGuardService.Update();
+        if (npcCombatStateService.InitializeDefaultWeaponsForWorld())
+            PersistNpcCombatState();
+        npcCombatStateService.Update();
         ConversationScreenState state = screenStates.Value;
         TrackVanillaInteractions();
         if (state.RequestApiKeyPrompt && CanOpenOwnMenu())
@@ -443,6 +488,14 @@ public sealed partial class ModEntry : Mod
             PersistSocial(force: false);
     }
 
+    private void OnRenderedWorld(object? sender, RenderedWorldEventArgs e)
+    {
+        if (!Context.IsWorldReady || !Context.IsMainPlayer)
+            return;
+
+        npcMineGuardService.DrawWorld(e.SpriteBatch);
+    }
+
     private void OnButtonPressed(object? sender, ButtonPressedEventArgs e)
     {
         if (!Context.IsWorldReady || e.Button != config.ChatKey)
@@ -506,8 +559,12 @@ public sealed partial class ModEntry : Mod
             .FirstOrDefault();
     }
 
-    private static bool IsValidTarget(NPC? npc)
-        => npc is not null && npc.IsVillager && npc.CanSocialize && !npc.IsInvisible;
+    private bool IsValidTarget(NPC? npc)
+        => npc is not null
+           && npc.IsVillager
+           && npc.CanSocialize
+           && !npc.IsInvisible
+           && !npcCombatStateService.IsHospitalized(npc.Name);
 
     private void OpenMessagePrompt(NPC npc)
     {
@@ -607,8 +664,23 @@ public sealed partial class ModEntry : Mod
                     NpcName = npcName,
                 };
         string gameDate = $"{Game1.Date} {Game1.timeOfDay}";
+        string graphRequestId = Guid.NewGuid().ToString("N");
+        string graphActionId = "conversation:" + graphRequestId;
         string giftActionId = string.Empty;
         IReadOnlyList<SocialGiftCandidate> giftCandidates = Array.Empty<SocialGiftCandidate>();
+        bool directGiftRequest = ConversationActionIntentPolicy.IsDirectGiftRequest(userText);
+        IReadOnlyList<ConversationMoveDestination> moveDestinations;
+        string? mineGuardBlockReason = npcMineGuardService.GetAvailabilityReason(npc, Game1.currentLocation);
+        bool mineGuardAvailable = mineGuardBlockReason is null;
+        Monitor.Log(
+            $"下矿护卫候选 {npcName}：可用={mineGuardAvailable}，阻止原因={mineGuardBlockReason ?? "无"}。",
+            LogLevel.Debug);
+        var moveCandidateTimer = System.Diagnostics.Stopwatch.StartNew();
+        moveDestinations = npcMoveToolService.BuildDestinations(npc, Game1.currentLocation);
+        moveCandidateTimer.Stop();
+        Monitor.Log(
+            $"当面对话移动候选 {npcName}：候选数={moveDestinations.Count}，耗时={moveCandidateTimer.Elapsed.TotalMilliseconds:F1}ms。",
+            LogLevel.Debug);
         string activitySummary = string.Empty;
         if (Context.IsMainPlayer && config.EnableSocialDirector)
         {
@@ -624,10 +696,22 @@ public sealed partial class ModEntry : Mod
                 npcName,
                 npcSocialState);
             SocialGiftCandidateSet giftSet = giftPolicyService.BuildCandidateSet(giftContext);
-            giftCandidates = giftSet.Candidates;
-            Monitor.Log(
-                $"当面对话礼物候选 {npcName}：候选数={giftSet.Candidates.Count}，阻止原因={giftSet.BlockReason}。",
-                LogLevel.Debug);
+            directGiftRequest = directGiftRequest || ConversationActionIntentPolicy.IsDirectGiftRequest(
+                userText,
+                giftSet.Candidates.Select(candidate => candidate.DisplayName));
+            if (directGiftRequest)
+            {
+                Monitor.Log(
+                    $"当面对话礼物候选 {npcName}：玩家正在直接索要，本轮不向 LLM 提供 give_gift。",
+                    LogLevel.Debug);
+            }
+            else
+            {
+                giftCandidates = giftSet.Candidates;
+                Monitor.Log(
+                    $"当面对话礼物候选 {npcName}：候选数={giftSet.Candidates.Count}，阻止原因={giftSet.BlockReason}。",
+                    LogLevel.Debug);
+            }
         }
 
         var options = new ConversationEngineOptions
@@ -641,10 +725,21 @@ public sealed partial class ModEntry : Mod
             RecentMessagesToKeep = config.SummaryKeepRecentMessages,
         };
 
-        string personaSummary = npcPersonaCatalog.TryGet(npcName, out NpcPersonaProfile? persona)
-            && persona is not null
-                ? persona.ToPrompt(npcDisplayName)
-                : $"{npcDisplayName} 的专属人格资料未配置；只使用当前 SystemPrompt 中已经明确的角色事实，不要套用其他 NPC 的性格。";
+        int npcHearts = Game1.player.getFriendshipHeartLevelForNPC(npcName);
+        string personalityInstruction =
+            $"你现在就是《星露谷物语》中的 {npcDisplayName}（内部名 {npcName}）。"
+            + $"严格按照《星露谷物语》中 {npcDisplayName}（{npcName}）的原版性格、说话方式、价值观、生活背景和已知经历回答。"
+            + "不要参考外部人格配置，也不要把其他 NPC 的性格套用到自己身上。"
+            + "好感度只改变你与玩家的亲密程度，不会抹掉原版性格中的棱角、偏好和拒绝意愿。";
+
+        string recalledMemory = ConversationMemoryPolicy.BuildRandomRecall(
+            memory.Summary,
+            playerId,
+            npcName,
+            gameDate,
+            memory.TotalTurns + 1);
+        List<ConversationMemoryMessage> recentMessages = ConversationMemoryPolicy.KeepRecentConversationTurns(
+            memory.Messages);
 
         var graphSnapshot = new NpcContextSnapshot
         {
@@ -652,20 +747,19 @@ public sealed partial class ModEntry : Mod
             NpcName = npcName,
             NpcDisplayName = npcDisplayName,
             Identity = $"{npcDisplayName} ({npcName})",
-            Personality = personaSummary,
-            Memory = memory.Summary ?? string.Empty,
+            Personality = personalityInstruction,
+            Memory = recalledMemory,
             Mood = string.IsNullOrWhiteSpace(activitySummary) ? "未记录" : activitySummary,
-            Relationship = memory.TotalTurns == 0
-                ? "与玩家的 AI 私人对话尚未建立；关系与好感事实以 SystemPrompt 为准。"
-                : $"已经与玩家完成 {memory.TotalTurns} 轮 AI 私人对话；关系与好感事实以 SystemPrompt 为准。",
-            Goal = $"以 {npcDisplayName} 的专属人格自然回应玩家，先服从实时游戏事实，再决定是否使用工具。",
+            Relationship = $"当前游戏好感为 {npcHearts} 心；已经完成 {memory.TotalTurns} 轮 AI 私人对话。"
+                           + "私聊轮数不代表关系升级，恋爱、婚姻与其他关系身份只以 SystemPrompt 的实时事实为准。",
+            Goal = $"以 {npcDisplayName} 的原版人格自然回应玩家，先服从实时游戏事实，再决定是否使用工具。",
             WorldState = $"地点：{Game1.currentLocation?.NameOrUniqueName ?? string.Empty}；日期：{Game1.Date.TotalDays}",
             PlayerProgress = "详见 systemPrompt 中的玩家进度事实。",
             SystemPrompt = snapshot.SystemPrompt,
             NarrativeContext = snapshot.NarrativeContext,
-            MemorySummary = memory.Summary ?? string.Empty,
-            RecentMessages = (memory.Messages ?? new List<ConversationMemoryMessage>())
-                .TakeLast(Math.Max(0, config.MaxContextMessages))
+            MemorySummary = recalledMemory,
+            RecentSessionFacts = snapshot.RecentSessionFacts ?? Array.Empty<string>(),
+            RecentMessages = recentMessages
                 .Select(message => new LangGraphConversationMessage
                 {
                     Role = message.Role ?? string.Empty,
@@ -680,12 +774,18 @@ public sealed partial class ModEntry : Mod
                 DisplayName = gift.DisplayName,
                 DisplayHint = gift.DisplayHint,
             }).ToArray(),
+            AllowedMoveDestinations = moveDestinations.Select(destination => new LangGraphMoveDestination
+            {
+                DestinationKey = destination.Key,
+                DisplayName = destination.DisplayName,
+            }).ToArray(),
+            MineGuardAvailable = mineGuardAvailable,
             PlayerInput = userText,
             PlayerId = playerId,
             Day = Game1.Date.TotalDays,
             Location = Game1.currentLocation?.NameOrUniqueName ?? string.Empty,
-            ActionId = giftActionId,
-            ContextVersion = $"{playerId}:{npcName}:{Game1.Date.TotalDays}:{Game1.currentLocation?.NameOrUniqueName}:{giftActionId}",
+            ActionId = graphActionId,
+            ContextVersion = $"{playerId}:{npcName}:{Game1.Date.TotalDays}:{Game1.currentLocation?.NameOrUniqueName}:{graphActionId}",
             Mode = "conversation",
             RequestMetadata = new Dictionary<string, string>(StringComparer.Ordinal)
             {
@@ -694,7 +794,6 @@ public sealed partial class ModEntry : Mod
             },
         };
 
-        string graphRequestId = Guid.NewGuid().ToString("N");
         var pendingInfo = new PendingConversationInfo(
             playerId,
             npcName,
@@ -709,6 +808,7 @@ public sealed partial class ModEntry : Mod
             activitySummary,
             giftActionId,
             giftCandidates,
+            moveDestinations,
             graphSnapshot,
             graphRequestId);
         state.PendingInfo = pendingInfo;
@@ -768,8 +868,46 @@ public sealed partial class ModEntry : Mod
                 if (state.StreamingMenu is null)
                     ShowHud(message);
                 state.PendingInfo = null;
+                state.PendingMoveConfirmation = null;
+                state.MoveConfirmationApproved = false;
                 state.GiftExecution = null;
+                state.MoveExecution = null;
+                state.MineGuardExecution = null;
                 ReleaseConversationCancellation(state);
+                return;
+            }
+
+            if (response.Confirmation is not null)
+            {
+                LangGraphMoveConfirmation confirmation = ValidateMoveConfirmation(response, info);
+                ConversationMoveDestination destination = info.MoveDestinations.FirstOrDefault(value => value.Key.Equals(
+                    confirmation.DestinationKey,
+                    StringComparison.Ordinal))
+                    ?? new ConversationMoveDestination { Key = "mine", DisplayName = "the mines" };
+                state.PendingMoveConfirmation = confirmation;
+                state.MoveConfirmationApproved = false;
+
+                if (state.StreamingMenu is null)
+                {
+                    Monitor.Log(
+                        $"{info.NpcName} 的移动确认界面已关闭，按玩家拒绝处理。",
+                        LogLevel.Debug);
+                    ResumePendingMoveConfirmation(state, approved: false);
+                    return;
+                }
+
+                string confirmationText = confirmation.Kind.Equals("mine_guard_confirmation", StringComparison.Ordinal)
+                    ? $"邀请 {info.NpcDisplayName} 一起下矿担任护卫？"
+                    : $"要和 {info.NpcDisplayName} 一起去{confirmation.DisplayName}吗？";
+                state.StreamingMenu.SetActionConfirmation(
+                    confirmationText,
+                    onApprove: () => ResumePendingMoveConfirmation(state, approved: true),
+                    onDecline: () => ResumePendingMoveConfirmation(state, approved: false));
+                Monitor.Log(
+                    confirmation.Kind.Equals("mine_guard_confirmation", StringComparison.Ordinal)
+                        ? $"等待玩家确认是否邀请 {info.NpcName} 一起下矿担任护卫。"
+                        : $"等待玩家确认是否与 {info.NpcName} 同行前往 {destination.Key}（{destination.DisplayName}）。",
+                    LogLevel.Info);
                 return;
             }
 
@@ -782,8 +920,17 @@ public sealed partial class ModEntry : Mod
                 response,
                 decision,
                 state.GiftExecution,
-                info);
+                state.MoveExecution,
+                state.MineGuardExecution,
+                info,
+                state.PendingMoveConfirmation);
             state.GiftExecution = execution;
+            ConversationMoveExecutionResult moveExecution = state.MoveExecution
+                ?? ConversationMoveExecutionResult.NoAction();
+            ConversationMineGuardExecutionResult mineGuardExecution = state.MineGuardExecution
+                ?? ConversationMineGuardExecutionResult.NoAction();
+            if (moveExecution.IsCommitted)
+                npcMoveToolService.SetTravelBarks(info.NpcName, decision.TravelBarks);
 
             string reply = NpcGiftToolService.GuardVisibleReply(
                 LimitReply(decision.Reply),
@@ -797,6 +944,8 @@ public sealed partial class ModEntry : Mod
                 info,
                 reply,
                 execution,
+                moveExecution,
+                mineGuardExecution,
                 decision.MemoryUpdate);
             GetPlayerMemories(info.PlayerId)[info.NpcName] = updatedMemory;
             memoryDirty = true;
@@ -816,8 +965,14 @@ public sealed partial class ModEntry : Mod
                     info.NpcDisplayName,
                     SanitizeForDialogue(reply));
             state.PendingInfo = null;
+            state.PendingMoveConfirmation = null;
+            state.MoveConfirmationApproved = false;
             state.GiftExecution = null;
-            Monitor.Log($"{info.NpcName} 的 LangGraph 对话完成；礼物结果={execution.Outcome}，字符数={reply.Length}。", LogLevel.Info);
+            state.MoveExecution = null;
+            state.MineGuardExecution = null;
+            Monitor.Log(
+                $"{info.NpcName} 的 LangGraph 对话完成；礼物结果={execution.Outcome}，移动结果={moveExecution.Outcome}，字符数={reply.Length}。",
+                LogLevel.Info);
             ReleaseConversationCancellation(state);
         }
         catch (OperationCanceledException)
@@ -826,22 +981,141 @@ public sealed partial class ModEntry : Mod
         }
         catch (Exception ex)
         {
-            HandleConversationFailure(state, info, state.GiftExecution ?? ConversationGiftExecutionResult.NoAction(), Unwrap(ex));
+            HandleConversationFailure(
+                state,
+                info,
+                state.GiftExecution ?? ConversationGiftExecutionResult.NoAction(),
+                Unwrap(ex),
+                state.MoveExecution,
+                state.MineGuardExecution);
         }
+    }
+
+    private static LangGraphMoveConfirmation ValidateMoveConfirmation(
+        LangGraphResponse response,
+        PendingConversationInfo info)
+    {
+        LangGraphMoveConfirmation confirmation = response.Confirmation
+            ?? throw new LangGraphValidationException("Graph response is missing move confirmation.");
+        if (!response.RequestId.Equals(info.GraphRequestId, StringComparison.Ordinal))
+            throw new LangGraphValidationException("Move confirmation request ID does not match the active request.");
+        if (!response.ContextVersion.Equals(info.GraphSnapshot.ContextVersion, StringComparison.Ordinal))
+            throw new LangGraphValidationException("Move confirmation context version is stale.");
+        if (!confirmation.Kind.Equals("move_confirmation", StringComparison.Ordinal)
+            && !confirmation.Kind.Equals("mine_guard_confirmation", StringComparison.Ordinal))
+            throw new LangGraphValidationException("Graph returned an unknown confirmation kind.");
+        if (string.IsNullOrWhiteSpace(confirmation.ResumeToken)
+            || string.IsNullOrWhiteSpace(confirmation.ToolCallId))
+        {
+            throw new LangGraphValidationException("Move confirmation is missing its secure continuation data.");
+        }
+        if (confirmation.Kind.Equals("mine_guard_confirmation", StringComparison.Ordinal))
+        {
+            if (!info.GraphSnapshot.MineGuardAvailable || !string.IsNullOrWhiteSpace(confirmation.DestinationKey))
+                throw new LangGraphValidationException("Mine guard confirmation is unavailable or malformed.");
+            return confirmation;
+        }
+        if (!(info.MoveDestinations ?? Array.Empty<ConversationMoveDestination>()).Any(destination =>
+                destination.Key.Equals(confirmation.DestinationKey, StringComparison.Ordinal)))
+        {
+            throw new LangGraphValidationException("Move confirmation destination is outside the current allowlist.");
+        }
+        return confirmation;
+    }
+
+    private void ResumePendingMoveConfirmation(ConversationScreenState state, bool approved)
+    {
+        PendingConversationInfo? info = state.PendingInfo;
+        LangGraphMoveConfirmation? confirmation = state.PendingMoveConfirmation;
+        if (info is null || confirmation is null || state.PendingGraphDecision is not null)
+            return;
+
+        if (!IsGraphContextCurrent(info))
+        {
+            string message = $"无法让 {info.NpcDisplayName} 出发：当前情境已经变化。";
+            state.StreamingMenu?.SetError(message);
+            if (state.StreamingMenu is null)
+                ShowHud(message, HUDMessage.error_type);
+            state.PendingInfo = null;
+            state.PendingMoveConfirmation = null;
+            state.MoveConfirmationApproved = false;
+            state.GiftExecution = null;
+            state.MoveExecution = null;
+            state.MineGuardExecution = null;
+            ReleaseConversationCancellation(state);
+            return;
+        }
+
+        ConversationMoveDestination? destination = info.MoveDestinations.FirstOrDefault(value => value.Key.Equals(
+            confirmation.DestinationKey,
+            StringComparison.Ordinal));
+        if (confirmation.Kind.Equals("mine_guard_confirmation", StringComparison.Ordinal))
+        {
+            state.MoveConfirmationApproved = approved;
+            if (!approved)
+            {
+                state.MineGuardExecution = new ConversationMineGuardExecutionResult
+                {
+                    RequestedToolName = NpcMineGuardToolNames.InviteMineGuard,
+                    Outcome = ConversationMineGuardOutcome.Rejected,
+                    FailureReason = "player_declined",
+                };
+            }
+            state.PendingGraphDecision = conversationOrchestrator.ResumeMoveAsync(
+                info.GraphRequestId,
+                confirmation.ResumeToken,
+                approved,
+                state.SessionCancellation.Token);
+            return;
+        }
+        if (destination is null)
+        {
+            HandleConversationFailure(
+                state,
+                info,
+                state.GiftExecution ?? ConversationGiftExecutionResult.NoAction(),
+                new LangGraphValidationException("Confirmed move destination is no longer allowed."),
+                state.MoveExecution);
+            return;
+        }
+
+        state.MoveConfirmationApproved = approved;
+        if (!approved)
+        {
+            state.MoveExecution = new ConversationMoveExecutionResult
+            {
+                RequestedToolName = NpcMoveToolNames.MoveTo,
+                Outcome = ConversationMoveOutcome.Rejected,
+                Destination = destination,
+                FailureReason = "player_declined",
+            };
+        }
+
+        state.PendingGraphDecision = conversationOrchestrator.ResumeMoveAsync(
+            info.GraphRequestId,
+            confirmation.ResumeToken,
+            approved,
+            state.SessionCancellation.Token);
+        Monitor.Log(
+            $"玩家已{(approved ? "确认" : "拒绝")} {info.NpcName} 前往 {destination.Key}（{destination.DisplayName}）。",
+            LogLevel.Info);
     }
 
     private static ConversationGiftExecutionResult ValidateGraphToolExecution(
         LangGraphResponse response,
         LangGraphDecision decision,
         ConversationGiftExecutionResult? execution,
-        PendingConversationInfo info)
+        ConversationMoveExecutionResult? moveExecution,
+        ConversationMineGuardExecutionResult? mineGuardExecution,
+        PendingConversationInfo info,
+        LangGraphMoveConfirmation? moveConfirmation)
     {
         ArgumentNullException.ThrowIfNull(response);
         ArgumentNullException.ThrowIfNull(decision);
         ArgumentNullException.ThrowIfNull(info);
 
         ConversationGiftExecutionResult resolved = execution
-            ?? ConversationGiftExecutionResult.NoAction(decision.Action.Name);
+            ?? ConversationGiftExecutionResult.NoAction();
         LangGraphToolExecution? toolExecution = response.ToolExecution;
         if (decision.Action.Name.Equals(NpcGiftToolNames.None, StringComparison.Ordinal))
         {
@@ -860,6 +1134,71 @@ public sealed partial class ModEntry : Mod
             throw new LangGraphValidationException("Graph tool execution is missing its tool call ID.");
         if (!toolExecution.Tool.Equals(decision.Action.Name, StringComparison.OrdinalIgnoreCase))
             throw new LangGraphValidationException("Graph tool execution does not match the selected action.");
+        if (decision.Action.Name.Equals(NpcMoveToolNames.MoveTo, StringComparison.Ordinal))
+        {
+            if (moveConfirmation is null)
+                throw new LangGraphValidationException("move_to completed without player confirmation.");
+            if (!toolExecution.ToolCallId.Equals(moveConfirmation.ToolCallId, StringComparison.Ordinal))
+                throw new LangGraphValidationException("move_to tool call differs from the confirmed action.");
+            if (!string.Equals(
+                    moveConfirmation.DestinationKey,
+                    decision.Action.DestinationKey,
+                    StringComparison.Ordinal))
+            {
+                throw new LangGraphValidationException("move_to destination differs from the confirmed destination.");
+            }
+            if (!string.Equals(
+                    toolExecution.DestinationKey,
+                    decision.Action.DestinationKey,
+                    StringComparison.Ordinal))
+            {
+                throw new LangGraphValidationException("Graph tool execution destination does not match the selected action.");
+            }
+            ConversationMoveExecutionResult movement = moveExecution
+                ?? ConversationMoveExecutionResult.NoAction();
+            if (!movement.RequestedToolName.Equals(NpcMoveToolNames.MoveTo, StringComparison.Ordinal)
+                || movement.Destination is null)
+            {
+                throw new LangGraphValidationException("Game bridge did not record the move_to execution.");
+            }
+            if (!movement.Destination.Key.Equals(decision.Action.DestinationKey, StringComparison.Ordinal))
+                throw new LangGraphValidationException("Game bridge destination differs from the graph action.");
+            if (toolExecution.Ok != movement.IsCommitted)
+                throw new LangGraphValidationException("Graph move result differs from the authoritative game result.");
+            if (movement.IsCommitted
+                && !toolExecution.Status.Equals("following", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new LangGraphValidationException("Graph move result did not preserve the companion-following state.");
+            }
+            if (!moveConfirmation.DestinationKey.Equals(movement.Destination.Key, StringComparison.Ordinal))
+                throw new LangGraphValidationException("Game move result differs from the confirmed destination.");
+            if (movement.FailureReason.Equals("player_declined", StringComparison.Ordinal)
+                && (!toolExecution.Status.Equals("rejected", StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(toolExecution.ReasonCode, "player_declined", StringComparison.Ordinal)))
+            {
+                throw new LangGraphValidationException("Graph did not preserve the player's declined move result.");
+            }
+            return resolved;
+        }
+        if (decision.Action.Name.Equals(NpcMineGuardToolNames.InviteMineGuard, StringComparison.Ordinal))
+        {
+            if (moveConfirmation is null
+                || !moveConfirmation.Kind.Equals("mine_guard_confirmation", StringComparison.Ordinal)
+                || !toolExecution.ToolCallId.Equals(moveConfirmation.ToolCallId, StringComparison.Ordinal))
+            {
+                throw new LangGraphValidationException("invite_mine_guard completed without the exact player confirmation.");
+            }
+            ConversationMineGuardExecutionResult mineGuard = mineGuardExecution
+                ?? ConversationMineGuardExecutionResult.NoAction();
+            if (!mineGuard.RequestedToolName.Equals(NpcMineGuardToolNames.InviteMineGuard, StringComparison.Ordinal))
+                throw new LangGraphValidationException("Game bridge did not record invite_mine_guard execution.");
+            if (toolExecution.Ok != mineGuard.IsCommitted)
+                throw new LangGraphValidationException("Graph mine guard result differs from the authoritative game result.");
+            if (mineGuard.IsCommitted
+                && !toolExecution.Status.Equals("guarding", StringComparison.OrdinalIgnoreCase))
+                throw new LangGraphValidationException("Graph mine guard result did not preserve the guarding state.");
+            return resolved;
+        }
         if (!string.Equals(
                 toolExecution.CandidateKey,
                 decision.Action.CandidateKey,
@@ -883,6 +1222,8 @@ public sealed partial class ModEntry : Mod
         PendingConversationInfo info,
         string reply,
         ConversationGiftExecutionResult execution,
+        ConversationMoveExecutionResult moveExecution,
+        ConversationMineGuardExecutionResult mineGuardExecution,
         LangGraphMemoryUpdate update)
     {
         NpcConversationMemory memory = info.MemorySnapshot.Clone();
@@ -906,19 +1247,17 @@ public sealed partial class ModEntry : Mod
         });
         memory.TotalTurns = checked(memory.TotalTurns + 1);
         memory.LastDate = info.GameDate;
-        if (!string.IsNullOrWhiteSpace(update.SummaryPatch))
-        {
-            string previous = memory.Summary?.Trim() ?? string.Empty;
-            memory.Summary = string.IsNullOrWhiteSpace(previous)
-                ? update.SummaryPatch.Trim()
-                : (previous + "\n" + update.SummaryPatch.Trim());
-            if (memory.Summary.Length > 6000)
-                memory.Summary = memory.Summary[^6000..];
-        }
+        memory.Summary = ConversationMemoryPolicy.UpdateLongTermMemory(
+            memory.Summary,
+            update.SummaryPatch,
+            info.GameDate,
+            info.PlayerId,
+            info.NpcName,
+            memory.TotalTurns);
         AppendConversationGiftMemory(memory, execution, info.GameDate);
-        int maxRecent = Math.Max(4, info.Options.MaxContextMessages);
-        if (memory.Messages.Count > maxRecent)
-            memory.Messages = memory.Messages.TakeLast(maxRecent).ToList();
+        AppendConversationMoveMemory(memory, moveExecution, info.GameDate);
+        AppendConversationMineGuardMemory(memory, mineGuardExecution, info.GameDate);
+        memory.Messages = ConversationMemoryPolicy.KeepRecentConversationTurns(memory.Messages);
         return memory;
     }
 
@@ -1053,13 +1392,23 @@ public sealed partial class ModEntry : Mod
         ConversationScreenState state,
         PendingConversationInfo info,
         ConversationGiftExecutionResult execution,
-        Exception actual)
+        Exception actual,
+        ConversationMoveExecutionResult? moveExecution = null,
+        ConversationMineGuardExecutionResult? mineGuardExecution = null)
     {
+        ConversationMoveExecutionResult movement = moveExecution
+            ?? ConversationMoveExecutionResult.NoAction();
+        ConversationMineGuardExecutionResult guard = mineGuardExecution
+            ?? ConversationMineGuardExecutionResult.NoAction();
         state.PendingGiftPlan = null;
         state.PendingGraphDecision = null;
         state.PendingConversation = null;
         state.PendingInfo = null;
+        state.PendingMoveConfirmation = null;
+        state.MoveConfirmationApproved = false;
         state.GiftExecution = null;
+        state.MoveExecution = null;
+        state.MineGuardExecution = null;
         Monitor.Log($"AI 对话失败：{actual}", LogLevel.Error);
         if (actual is DeepSeekApiException apiException
             && apiException.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
@@ -1068,11 +1417,13 @@ public sealed partial class ModEntry : Mod
             state.RequestApiKeyPrompt = true;
         }
 
-        if (execution.IsCommitted)
+        if (execution.IsCommitted || movement.IsCommitted || guard.IsCommitted)
         {
-            string reply = LimitReply(NpcGiftToolService.CreateFallbackReply(
-                execution,
-                info.NpcDisplayName));
+            string reply = LimitReply(execution.IsCommitted
+                ? NpcGiftToolService.CreateFallbackReply(execution, info.NpcDisplayName)
+                : movement.IsCommitted
+                    ? CreateMoveFallbackReply(movement)
+                    : CreateMineGuardFallbackReply(info.NpcDisplayName));
             NpcConversationMemory memory = info.MemorySnapshot.Clone();
             memory.Messages ??= new List<ConversationMemoryMessage>();
             DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -1095,6 +1446,16 @@ public sealed partial class ModEntry : Mod
             memory.TotalTurns = checked(memory.TotalTurns + 1);
             memory.LastDate = info.GameDate;
             AppendConversationGiftMemory(memory, execution, info.GameDate);
+            AppendConversationMoveMemory(memory, movement, info.GameDate);
+            AppendConversationMineGuardMemory(memory, guard, info.GameDate);
+            memory.Summary = ConversationMemoryPolicy.UpdateLongTermMemory(
+                memory.Summary,
+                summaryPatch: null,
+                info.GameDate,
+                info.PlayerId,
+                info.NpcName,
+                memory.TotalTurns);
+            memory.Messages = ConversationMemoryPolicy.KeepRecentConversationTurns(memory.Messages);
 
             Dictionary<string, NpcConversationMemory> playerMemories = GetPlayerMemories(info.PlayerId);
             playerMemories[info.NpcName] = memory;
@@ -1111,7 +1472,7 @@ public sealed partial class ModEntry : Mod
                     info.NpcDisplayName,
                     SanitizeForDialogue(reply));
             Monitor.Log(
-                $"{info.NpcName} 的礼物已经提交；最终 AI 请求失败，已使用与真实结果一致的后备台词。",
+                $"{info.NpcName} 的游戏动作已经提交；最终 AI 请求失败，已使用与真实结果一致的后备台词。",
                 LogLevel.Warn);
         }
         else
@@ -1150,6 +1511,52 @@ public sealed partial class ModEntry : Mod
             Source = ConversationMemorySources.ModGift,
         });
     }
+
+    private static void AppendConversationMoveMemory(
+        NpcConversationMemory memory,
+        ConversationMoveExecutionResult execution,
+        string gameDate)
+    {
+        if (!execution.IsCommitted || execution.Destination is null)
+            return;
+
+        memory.Messages ??= new List<ConversationMemoryMessage>();
+        memory.Messages.Add(new ConversationMemoryMessage
+        {
+            Role = "system",
+            Content = $"move_to 已执行：NPC 已开始和玩家一起前往{execution.Destination.DisplayName}，由玩家带路。",
+            GameDate = gameDate,
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            Source = ConversationMemorySources.ModAction,
+        });
+    }
+
+    private static string CreateMoveFallbackReply(ConversationMoveExecutionResult execution)
+    {
+        string destination = execution.Destination?.DisplayName ?? "那里";
+        return $"好，那就一起去{destination}吧。你带路，我跟着你。";
+    }
+
+    private static void AppendConversationMineGuardMemory(
+        NpcConversationMemory memory,
+        ConversationMineGuardExecutionResult execution,
+        string gameDate)
+    {
+        if (!execution.IsCommitted)
+            return;
+        memory.Messages ??= new List<ConversationMemoryMessage>();
+        memory.Messages.Add(new ConversationMemoryMessage
+        {
+            Role = "system",
+            Content = "下矿护卫已执行：NPC 接受邀请，开始跟随玩家并担任护卫。",
+            GameDate = gameDate,
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            Source = ConversationMemorySources.ModAction,
+        });
+    }
+
+    private static string CreateMineGuardFallbackReply(string npcDisplayName)
+        => $"{npcDisplayName} 答应了，会在你下矿时跟着你并负责警戒。";
 
     private static void ReleaseConversationCancellation(ConversationScreenState state)
     {
@@ -1578,6 +1985,7 @@ public sealed partial class ModEntry : Mod
             Source = ConversationMemorySources.ModProactive,
         });
         memory.LastDate = date;
+        memory.Messages = ConversationMemoryPolicy.KeepRecentConversationTurns(memory.Messages);
         memoryDirty = true;
         PersistMemory(force: false);
     }
@@ -1765,6 +2173,42 @@ public sealed partial class ModEntry : Mod
             SaveAiProviderSettings,
             TestAiProviderSettingsAsync,
             onCancel: () => { });
+    }
+
+    private void OnNpcDefeated(NpcCombatDefeatEvent defeat)
+    {
+        if (!Context.IsWorldReady || !Context.IsMainPlayer)
+            return;
+
+        NpcConversationMemory memory = memoryStore.GetOrCreate(GetPlayerId(), defeat.NpcName);
+        memory.Messages ??= new List<ConversationMemoryMessage>();
+        string dedupeKey = $"npc-combat-defeat:{defeat.NpcName}:{Game1.Date.TotalDays}:{defeat.HospitalReleaseDay}";
+        if (memory.Messages.Any(message => string.Equals(message.DedupeKey, dedupeKey, StringComparison.Ordinal)))
+            return;
+
+        string content = $"I was defeated while guarding the player in the mines and was sent to the hospital. "
+                         + $"Friendship fell by {defeat.FriendshipLoss} points; recovery day is {defeat.HospitalReleaseDay}.";
+        memory.Messages.Add(new ConversationMemoryMessage
+        {
+            Role = "system",
+            Content = content,
+            GameDate = defeat.GameDate,
+            Source = ConversationMemorySources.ModAction,
+            EventId = "npc-combat-defeat",
+            DedupeKey = dedupeKey,
+            LocationName = defeat.LocationName,
+        });
+        memory.Summary = ConversationMemoryPolicy.UpdateLongTermMemory(
+            memory.Summary,
+            content,
+            defeat.GameDate,
+            GetPlayerId(),
+            defeat.NpcName,
+            memory.TotalTurns);
+        memory.Messages = ConversationMemoryPolicy.KeepRecentConversationTurns(memory.Messages);
+        memoryDirty = true;
+        PersistMemory(force: false);
+        PersistNpcCombatState();
     }
 
     private AiSettingsSaveResult SaveAiProviderSettings(AiProviderSettingsDraft draft)
@@ -2227,6 +2671,43 @@ public sealed partial class ModEntry : Mod
         return memories;
     }
 
+    private bool NormalizeConversationMemoryRetention()
+    {
+        bool changed = false;
+        foreach ((string playerId, Dictionary<string, NpcConversationMemory>? memories) in memoryStore.Players)
+        {
+            if (memories is null)
+                continue;
+
+            foreach ((string npcName, NpcConversationMemory? memory) in memories)
+            {
+                if (memory is null)
+                    continue;
+
+                string summary = ConversationMemoryPolicy.UpdateLongTermMemory(
+                    memory.Summary,
+                    summaryPatch: null,
+                    memory.LastDate,
+                    playerId,
+                    npcName,
+                    memory.TotalTurns);
+                List<ConversationMemoryMessage> messages = ConversationMemoryPolicy.KeepRecentConversationTurns(
+                    memory.Messages);
+                if (!string.Equals(summary, memory.Summary, StringComparison.Ordinal))
+                {
+                    memory.Summary = summary;
+                    changed = true;
+                }
+                if (messages.Count != (memory.Messages?.Count ?? 0))
+                {
+                    memory.Messages = messages;
+                    changed = true;
+                }
+            }
+        }
+        return changed;
+    }
+
     private void PersistMemory(bool force)
     {
         if (!Context.IsWorldReady || !Context.IsMainPlayer || (!force && !memoryDirty))
@@ -2240,6 +2721,21 @@ public sealed partial class ModEntry : Mod
         catch (Exception ex)
         {
             Monitor.Log($"保存 NPC 对话记忆失败：{ex}", LogLevel.Error);
+        }
+    }
+
+    private void PersistNpcCombatState()
+    {
+        if (!Context.IsWorldReady || !Context.IsMainPlayer)
+            return;
+
+        try
+        {
+            Helper.Data.WriteSaveData(CombatSaveDataKey, npcCombatStateService.Store);
+        }
+        catch (Exception ex)
+        {
+            Monitor.Log($"Failed to save NPC combat state: {ex}", LogLevel.Error);
         }
     }
 
@@ -2488,7 +2984,11 @@ public sealed partial class ModEntry : Mod
         state.PendingGraphDecision = null;
         state.PendingConversation = null;
         state.PendingInfo = null;
+        state.PendingMoveConfirmation = null;
+        state.MoveConfirmationApproved = false;
         state.GiftExecution = null;
+        state.MoveExecution = null;
+        state.MineGuardExecution = null;
         state.SessionCancellation = new CancellationTokenSource();
         if (!cancellation.IsCancellationRequested)
             cancellation.Cancel();
@@ -2755,7 +3255,7 @@ public sealed partial class ModEntry : Mod
             return false;
 
         string expectedVersion =
-            $"{info.PlayerId}:{info.NpcName}:{Game1.Date.TotalDays}:{currentLocation}:{info.GiftActionId}";
+            $"{info.PlayerId}:{info.NpcName}:{Game1.Date.TotalDays}:{currentLocation}:{info.GraphSnapshot.ActionId}";
         return info.GraphSnapshot.ContextVersion.Equals(expectedVersion, StringComparison.Ordinal);
     }
 
@@ -2793,6 +3293,7 @@ public sealed partial class ModEntry : Mod
         {
             bool sameCall = receipt.Tool.Equals(request.Tool, StringComparison.Ordinal)
                             && receipt.CandidateKey.Equals(request.CandidateKey, StringComparison.Ordinal)
+                            && receipt.DestinationKey.Equals(request.DestinationKey, StringComparison.Ordinal)
                             && receipt.ContextVersion.Equals(request.ContextVersion, StringComparison.Ordinal);
             return sameCall
                 ? receipt.Result
@@ -2822,15 +3323,142 @@ public sealed partial class ModEntry : Mod
         if (!IsGraphContextCurrent(info)
             || !request.PlayerId.Equals(info.PlayerId, StringComparison.Ordinal)
             || !request.NpcName.Equals(info.NpcName, StringComparison.Ordinal)
-            || !request.ActionId.Equals(info.GiftActionId, StringComparison.Ordinal)
+            || !request.ActionId.Equals(info.GraphSnapshot.ActionId, StringComparison.Ordinal)
             || !request.ContextVersion.Equals(info.GraphSnapshot.ContextVersion, StringComparison.Ordinal))
         {
             return RejectGameBridgeTool(request, "stale_context", "The game context changed before the tool could execute.");
         }
 
         string toolName = (request.Tool ?? string.Empty).Trim().ToLowerInvariant();
-        if (toolName is not (NpcGiftToolNames.GiveGift or NpcGiftToolNames.MailGift))
+        if (toolName is not (
+                NpcGiftToolNames.GiveGift
+                or NpcGiftToolNames.MailGift
+                or NpcMoveToolNames.MoveTo
+                or NpcMineGuardToolNames.InviteMineGuard))
             return RejectGameBridgeTool(request, "unknown_tool", "The requested game tool is not registered.");
+
+        if (toolName == NpcMoveToolNames.MoveTo)
+        {
+            if (!string.IsNullOrWhiteSpace(request.CandidateKey)
+                || string.IsNullOrWhiteSpace(request.DestinationKey))
+            {
+                return RejectGameBridgeTool(request, "invalid_arguments", "move_to requires only destinationKey.");
+            }
+
+            ConversationMoveDestination? destination = info.MoveDestinations.FirstOrDefault(value => value.Key.Equals(
+                request.DestinationKey,
+                StringComparison.Ordinal));
+            if (destination is null)
+                return RejectGameBridgeTool(request, "destination_not_allowed", "The destination is outside the current allowlist.");
+            LangGraphMoveConfirmation? confirmation = targetState.PendingMoveConfirmation;
+            if (confirmation is null
+                || !targetState.MoveConfirmationApproved
+                || !confirmation.ToolCallId.Equals(request.ToolCallId, StringComparison.Ordinal)
+                || !confirmation.DestinationKey.Equals(request.DestinationKey, StringComparison.Ordinal))
+            {
+                return RejectGameBridgeTool(
+                    request,
+                    "move_not_confirmed",
+                    "The player did not approve this exact move request.");
+            }
+
+            NPC? npc = Game1.getCharacterFromName(
+                info.NpcName,
+                mustBeVillager: false,
+                includeEventActors: false);
+            ConversationMoveExecutionResult movement = npc is null
+                ? new ConversationMoveExecutionResult
+                {
+                    RequestedToolName = NpcMoveToolNames.MoveTo,
+                    Outcome = ConversationMoveOutcome.Rejected,
+                    Destination = destination,
+                    FailureReason = "npc_unavailable",
+                }
+                : npcMoveToolService.Execute(npc, Game1.player, destination);
+            targetState.MoveExecution = movement;
+            var moveResult = new GameBridgeToolResult
+            {
+                RequestId = request.RequestId,
+                ToolCallId = request.ToolCallId,
+                ContextVersion = request.ContextVersion,
+                Tool = toolName,
+                Status = movement.IsCommitted ? "following" : movement.Outcome == ConversationMoveOutcome.Failed ? "failed" : "rejected",
+                Ok = movement.IsCommitted,
+                DestinationKey = destination.Key,
+                DisplayName = destination.DisplayName,
+                ReasonCode = movement.IsCommitted ? null : NormalizeOptionalBridgeValue(movement.FailureReason),
+                Message = movement.IsCommitted
+                    ? $"The NPC started traveling with the player toward {destination.DisplayName}; the player is leading."
+                    : $"The shared trip did not start: {movement.FailureReason}",
+                ReceiptId = receiptKey,
+            };
+            gameBridgeReceipts[receiptKey] = new GameBridgeReceipt(
+                toolName,
+                request.CandidateKey ?? string.Empty,
+                request.DestinationKey ?? string.Empty,
+                request.ContextVersion ?? string.Empty,
+                moveResult);
+            return moveResult;
+        }
+
+        if (toolName == NpcMineGuardToolNames.InviteMineGuard)
+        {
+            if (!string.IsNullOrWhiteSpace(request.CandidateKey)
+                || !string.IsNullOrWhiteSpace(request.DestinationKey))
+                return RejectGameBridgeTool(request, "invalid_arguments", "invite_mine_guard accepts no arguments.");
+            LangGraphMoveConfirmation? confirmation = targetState.PendingMoveConfirmation;
+            if (confirmation is null
+                || !targetState.MoveConfirmationApproved
+                || !confirmation.Kind.Equals("mine_guard_confirmation", StringComparison.Ordinal)
+                || !confirmation.ToolCallId.Equals(request.ToolCallId, StringComparison.Ordinal))
+            {
+                return RejectGameBridgeTool(
+                    request,
+                    "mine_guard_not_confirmed",
+                    "玩家没有确认这次下矿护卫邀请。");
+            }
+
+            NPC? npc = Game1.getCharacterFromName(
+                info.NpcName,
+                mustBeVillager: false,
+                includeEventActors: false);
+            ConversationMineGuardExecutionResult mineGuard = npc is null
+                ? new ConversationMineGuardExecutionResult
+                {
+                    RequestedToolName = NpcMineGuardToolNames.InviteMineGuard,
+                    Outcome = ConversationMineGuardOutcome.Rejected,
+                    FailureReason = "npc_unavailable",
+                }
+                : npcMineGuardService.Execute(npc, Game1.player);
+            targetState.MineGuardExecution = mineGuard;
+            var guardResult = new GameBridgeToolResult
+            {
+                RequestId = request.RequestId,
+                ToolCallId = request.ToolCallId,
+                ContextVersion = request.ContextVersion,
+                Tool = toolName,
+                Status = mineGuard.IsCommitted ? "guarding" : mineGuard.Outcome == ConversationMineGuardOutcome.Failed ? "failed" : "rejected",
+                Ok = mineGuard.IsCommitted,
+                ReasonCode = mineGuard.IsCommitted ? null : NormalizeOptionalBridgeValue(mineGuard.FailureReason),
+                Message = mineGuard.IsCommitted
+                    ? "NPC 已接受下矿护卫，会由游戏跟随玩家并攻击附近的怪物。"
+                    : $"下矿护卫没有开始：{mineGuard.FailureReason}",
+                ReceiptId = receiptKey,
+            };
+            gameBridgeReceipts[receiptKey] = new GameBridgeReceipt(
+                toolName,
+                string.Empty,
+                string.Empty,
+                request.ContextVersion ?? string.Empty,
+                guardResult);
+            return guardResult;
+        }
+
+        if (string.IsNullOrWhiteSpace(request.CandidateKey)
+            || !string.IsNullOrWhiteSpace(request.DestinationKey))
+        {
+            return RejectGameBridgeTool(request, "invalid_arguments", "Gift tools require only candidateKey.");
+        }
 
         ConversationGiftExecutionResult execution = ExecuteConversationGiftTool(
             info,
@@ -2873,6 +3501,7 @@ public sealed partial class ModEntry : Mod
         gameBridgeReceipts[receiptKey] = new GameBridgeReceipt(
             toolName,
             request.CandidateKey ?? string.Empty,
+            request.DestinationKey ?? string.Empty,
             request.ContextVersion ?? string.Empty,
             result);
         return result;
@@ -2891,6 +3520,7 @@ public sealed partial class ModEntry : Mod
             Status = "rejected",
             Ok = false,
             CandidateKey = NormalizeOptionalBridgeValue(request.CandidateKey),
+            DestinationKey = NormalizeOptionalBridgeValue(request.DestinationKey),
             ReasonCode = reasonCode,
             Message = message,
             ReceiptId = $"{request.RequestId}:{request.ToolCallId}",
@@ -2962,6 +3592,7 @@ public sealed partial class ModEntry : Mod
         string ActivitySummary,
         string GiftActionId,
         IReadOnlyList<SocialGiftCandidate> GiftCandidates,
+        IReadOnlyList<ConversationMoveDestination> MoveDestinations,
         NpcContextSnapshot GraphSnapshot,
         string GraphRequestId);
 
@@ -2972,6 +3603,7 @@ public sealed partial class ModEntry : Mod
     private sealed record GameBridgeReceipt(
         string Tool,
         string CandidateKey,
+        string DestinationKey,
         string ContextVersion,
         GameBridgeToolResult Result);
 
@@ -3039,12 +3671,21 @@ public sealed partial class ModEntry : Mod
 
         public PendingConversationInfo? PendingInfo { get; set; }
 
+        public LangGraphMoveConfirmation? PendingMoveConfirmation { get; set; }
+
+        public bool MoveConfirmationApproved { get; set; }
+
         public ConversationGiftExecutionResult? GiftExecution { get; set; }
+
+        public ConversationMoveExecutionResult? MoveExecution { get; set; }
+
+        public ConversationMineGuardExecutionResult? MineGuardExecution { get; set; }
 
         public bool HasPendingConversation
             => PendingGiftPlan is not null
                || PendingGraphDecision is not null
-               || PendingConversation is not null;
+               || PendingConversation is not null
+               || PendingMoveConfirmation is not null;
 
         public QueuedDialogue? QueuedDialogue { get; set; }
 

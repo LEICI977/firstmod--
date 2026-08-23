@@ -353,6 +353,7 @@ public sealed class ConversationEngine
             ConversationMemorySources.VanillaChoice => "[原版游戏选择] " + content,
             ConversationMemorySources.VanillaGift => "[原版游戏送礼] " + content,
             ConversationMemorySources.ModGift => "[Mod 已执行动作] " + content,
+            ConversationMemorySources.ModAction => "[Mod 已执行动作] " + content,
             ConversationMemorySources.ModProactive => "[Mod 主动剧情] " + content,
             ConversationMemorySources.ModSocial => "[Mod 主动相遇] " + content,
             ConversationMemorySources.ModMail => "[Mod 邮件] " + content,

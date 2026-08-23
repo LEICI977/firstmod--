@@ -16,7 +16,8 @@ public sealed class LangGraphClient
     };
 
     private readonly HttpClient httpClient;
-    private readonly Uri endpoint;
+    private readonly Uri decisionEndpoint;
+    private readonly Uri confirmationEndpoint;
 
     public LangGraphClient(HttpClient httpClient, string baseUrl, TimeSpan timeout)
     {
@@ -27,7 +28,8 @@ public sealed class LangGraphClient
             throw new ArgumentException("LangGraphBaseUrl must be an absolute HTTP URL.", nameof(baseUrl));
         }
 
-        endpoint = parsed;
+        decisionEndpoint = parsed;
+        confirmationEndpoint = new Uri(parsed, "/v1/graph/confirm");
         timeout = timeout <= TimeSpan.Zero ? TimeSpan.FromSeconds(120) : timeout;
         httpClient.Timeout = timeout;
     }
@@ -37,10 +39,26 @@ public sealed class LangGraphClient
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        return await PostAsync(decisionEndpoint, request, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<LangGraphResponse> ResumeMoveAsync(
+        LangGraphResumeRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return await PostAsync(confirmationEndpoint, request, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<LangGraphResponse> PostAsync(
+        Uri target,
+        object request,
+        CancellationToken cancellationToken)
+    {
         string json = JsonSerializer.Serialize(request, JsonOptions);
         using var content = new StringContent(json, Encoding.UTF8, "application/json");
         using HttpResponseMessage response = await httpClient.PostAsync(
-                endpoint,
+                target,
                 content,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -55,8 +73,12 @@ public sealed class LangGraphClient
         try
         {
             LangGraphResponse? result = JsonSerializer.Deserialize<LangGraphResponse>(body, JsonOptions);
-            if (result?.Decision is null)
-                throw new LangGraphException("LangGraph response did not contain a decision.", response.StatusCode);
+            if (result is null || (result.Decision is null) == (result.Confirmation is null))
+            {
+                throw new LangGraphException(
+                    "LangGraph response must contain exactly one decision or confirmation.",
+                    response.StatusCode);
+            }
             return result;
         }
         catch (JsonException exception)

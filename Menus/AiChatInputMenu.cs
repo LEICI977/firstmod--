@@ -280,4 +280,5 @@ public sealed class AiChatInputMenu : IClickableMenu
             new Vector2(bounds.Center.X - size.X / 2f, bounds.Center.Y - size.Y / 2f),
             Game1.textColor);
     }
+
 }
