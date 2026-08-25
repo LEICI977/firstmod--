@@ -1069,6 +1069,16 @@ def call_provider(
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
     max_tokens = max(128, min(int(llm.get("maxOutputTokens", 2048)), 2048))
+    try:
+        temperature = max(0.0, min(float(llm.get("temperature", 0.75)), 2.0))
+    except (TypeError, ValueError):
+        temperature = 0.75
+    try:
+        top_p = max(0.0, min(float(llm.get("topP", 0.9)), 1.0))
+    except (TypeError, ValueError):
+        top_p = 0.9
+    payload["temperature"] = temperature
+    payload["top_p"] = top_p
     if provider == "openai":
         payload["max_completion_tokens"] = max_tokens
     else:

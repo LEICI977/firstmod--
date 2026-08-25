@@ -77,6 +77,12 @@ public sealed class ModConfig
     /// <summary>Maximum output tokens requested from DeepSeek for one API operation.</summary>
     public int MaxOutputTokens { get; set; } = 2048;
 
+    /// <summary>Display scale for the manual conversation composer and reply window.</summary>
+    public float ConversationUiScale { get; set; } = 1f;
+
+    /// <summary>Independent display scale for proactive encounter windows.</summary>
+    public float ProactiveUiScale { get; set; } = 1f;
+
     /// <summary>Whether recent positive conversations can produce same-day proactive NPC encounters.</summary>
     public bool EnableSocialDirector { get; set; } = true;
 

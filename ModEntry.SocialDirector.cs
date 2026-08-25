@@ -562,7 +562,8 @@ public sealed partial class ModEntry
                     screenState.SocialMenu = null;
                     screenState.ActiveSocialScene = null;
                 }
-            });
+            },
+            proactiveUiScale: config.ProactiveUiScale);
         screenState.SocialMenu = menu;
         Game1.activeClickableMenu = menu;
     }

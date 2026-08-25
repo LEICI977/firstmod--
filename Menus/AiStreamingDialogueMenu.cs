@@ -16,6 +16,7 @@ public sealed class AiStreamingDialogueMenu : IClickableMenu
     private readonly string npcName;
     private readonly string npcDisplayName;
     private readonly int maximumCharacters;
+    private readonly float conversationUiScale;
     private readonly Action onCancel;
     private readonly Action onContinue;
     private readonly Action onClosed;
@@ -39,6 +40,7 @@ public sealed class AiStreamingDialogueMenu : IClickableMenu
         string npcName,
         string npcDisplayName,
         int maximumCharacters,
+        float conversationUiScale,
         Action onCancel,
         Action onContinue,
         Action onClosed)
@@ -46,6 +48,7 @@ public sealed class AiStreamingDialogueMenu : IClickableMenu
         this.npcName = npcName;
         this.npcDisplayName = npcDisplayName;
         this.maximumCharacters = Math.Max(100, maximumCharacters);
+        this.conversationUiScale = ConversationUiLayout.ClampScale(conversationUiScale);
         this.onCancel = onCancel;
         this.onContinue = onContinue;
         this.onClosed = onClosed;
@@ -509,9 +512,18 @@ public sealed class AiStreamingDialogueMenu : IClickableMenu
 
     private void Reposition()
     {
-        int availableWidth = Math.Max(400, Game1.uiViewport.Width - HorizontalMargin * 2);
-        width = Math.Min(920, availableWidth);
-        height = Math.Min(278, Math.Max(218, Game1.uiViewport.Height - BottomMargin * 2));
+        width = ConversationUiLayout.CalculateWidth(
+            Game1.uiViewport.Width,
+            HorizontalMargin,
+            conversationUiScale,
+            viewportRatio: 0.68f,
+            minimumWidth: 560);
+        height = ConversationUiLayout.CalculateHeight(
+            Game1.uiViewport.Height,
+            BottomMargin,
+            conversationUiScale,
+            viewportRatio: 0.30f,
+            minimumHeight: 218);
         xPositionOnScreen = (Game1.uiViewport.Width - width) / 2;
         yPositionOnScreen = Math.Max(8, Game1.uiViewport.Height - height - BottomMargin);
 

@@ -73,6 +73,10 @@ public sealed class LangGraphLlmProfile
     public string ApiKey { get; set; } = string.Empty;
     public bool EnableThinking { get; set; }
     public string ReasoningEffort { get; set; } = "low";
+    /// <summary>Sampling temperature used by the LangGraph provider call.</summary>
+    public double Temperature { get; set; } = 0.75d;
+    /// <summary>Nucleus sampling probability used by the LangGraph provider call.</summary>
+    public double TopP { get; set; } = 0.9d;
     public int MaxOutputTokens { get; set; } = 2048;
 }
 

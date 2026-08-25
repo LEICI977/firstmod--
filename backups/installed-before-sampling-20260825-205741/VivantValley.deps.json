@@ -1,0 +1,23 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v6.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v6.0": {
+      "VivantValley/0.13.0": {
+        "runtime": {
+          "VivantValley.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "VivantValley/0.13.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

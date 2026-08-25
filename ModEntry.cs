@@ -596,7 +596,8 @@ public sealed partial class ModEntry : Mod
                 }
             },
             onCancel: () => { },
-            onOpenSettings: OpenApiKeyPrompt);
+            onOpenSettings: OpenApiKeyPrompt,
+            conversationUiScale: config.ConversationUiScale);
     }
 
     private void QueueConversationContinuation(
@@ -845,6 +846,7 @@ public sealed partial class ModEntry : Mod
             npcName,
             npcDisplayName,
             config.MaxReplyCharacters,
+            config.ConversationUiScale,
             onCancel: () =>
             {
                 ConversationScreenState currentState = screenStates.GetValueForScreen(screenId);
@@ -1935,7 +1937,8 @@ public sealed partial class ModEntry : Mod
                     screenState.ProactiveMenu = null;
                     screenState.ActiveProactiveScene = null;
                 }
-            });
+            },
+            proactiveUiScale: config.ProactiveUiScale);
         screenState.ProactiveMenu = menu;
         Game1.activeClickableMenu = menu;
     }
@@ -2284,7 +2287,37 @@ public sealed partial class ModEntry : Mod
             config.Ai,
             SaveAiProviderSettings,
             TestAiProviderSettingsAsync,
-            onCancel: () => { });
+            onCancel: () => { },
+            conversationUiScale: config.ConversationUiScale,
+            onSaveConversationUiScale: SaveConversationUiScale,
+            proactiveUiScale: config.ProactiveUiScale,
+            onSaveProactiveUiScale: SaveProactiveUiScale);
+    }
+
+    private void SaveConversationUiScale(float value)
+    {
+        config.ConversationUiScale = ConversationUiLayout.ClampScale(value);
+        try
+        {
+            Helper.WriteConfig(config);
+        }
+        catch (Exception exception)
+        {
+            Monitor.Log($"保存对话框大小设置失败：{exception.Message}", LogLevel.Warn);
+        }
+    }
+
+    private void SaveProactiveUiScale(float value)
+    {
+        config.ProactiveUiScale = ConversationUiLayout.ClampScale(value);
+        try
+        {
+            Helper.WriteConfig(config);
+        }
+        catch (Exception exception)
+        {
+            Monitor.Log($"保存主动对话框大小设置失败：{exception.Message}", LogLevel.Warn);
+        }
     }
 
     private void OnNpcDefeated(NpcCombatDefeatEvent defeat)
@@ -3189,6 +3222,12 @@ public sealed partial class ModEntry : Mod
         config.MaxNarrativeContextCharacters = Math.Clamp(config.MaxNarrativeContextCharacters, 2000, 6000);
         config.MaxReplyCharacters = Math.Clamp(config.MaxReplyCharacters, 100, 6000);
         config.MaxOutputTokens = Math.Clamp(config.MaxOutputTokens, 128, 2048);
+        config.ConversationUiScale = float.IsFinite(config.ConversationUiScale)
+            ? Math.Clamp(config.ConversationUiScale, 0.75f, 1.5f)
+            : 1f;
+        config.ProactiveUiScale = float.IsFinite(config.ProactiveUiScale)
+            ? Math.Clamp(config.ProactiveUiScale, 0.75f, 1.5f)
+            : 1f;
         config.DailyCandidateMin = Math.Clamp(config.DailyCandidateMin, 1, 5);
         config.DailyCandidateMax = Math.Clamp(config.DailyCandidateMax, config.DailyCandidateMin, 5);
         config.DailyEncounterLimit = Math.Clamp(config.DailyEncounterLimit, 1, 10);

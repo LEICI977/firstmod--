@@ -28,23 +28,39 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
     private readonly ClickableComponent saveButton = new(Rectangle.Empty, "save");
     private readonly ClickableComponent testButton = new(Rectangle.Empty, "test");
     private readonly ClickableComponent clearKeyButton = new(Rectangle.Empty, "clear-key");
+    private readonly ClickableComponent uiScaleDecrease = new(Rectangle.Empty, "ui-scale-decrease");
+    private readonly ClickableComponent uiScaleIncrease = new(Rectangle.Empty, "ui-scale-increase");
+    private readonly ClickableComponent proactiveUiScaleDecrease = new(Rectangle.Empty, "proactive-ui-scale-decrease");
+    private readonly ClickableComponent proactiveUiScaleIncrease = new(Rectangle.Empty, "proactive-ui-scale-increase");
+    private readonly Action<float>? onSaveConversationUiScale;
+    private readonly Action<float>? onSaveProactiveUiScale;
     private CancellationTokenSource testCancellation = new();
     private Task<string>? pendingTest;
     private string activeProvider;
     private string statusText = string.Empty;
     private Color statusColor = Game1.textColor;
+    private float conversationUiScale;
+    private float proactiveUiScale;
     private bool closed;
 
     public AiProviderSettingsMenu(
         AiProviderSettings settings,
         Func<AiProviderSettingsDraft, AiSettingsSaveResult> onSave,
         Func<AiProviderSettingsDraft, CancellationToken, Task<string>> onTest,
-        Action onCancel)
+        Action onCancel,
+        float conversationUiScale = 1f,
+        Action<float>? onSaveConversationUiScale = null,
+        float proactiveUiScale = 1f,
+        Action<float>? onSaveProactiveUiScale = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         this.onSave = onSave ?? throw new ArgumentNullException(nameof(onSave));
         this.onTest = onTest ?? throw new ArgumentNullException(nameof(onTest));
         this.onCancel = onCancel ?? throw new ArgumentNullException(nameof(onCancel));
+        this.conversationUiScale = ConversationUiLayout.ClampScale(conversationUiScale);
+        this.onSaveConversationUiScale = onSaveConversationUiScale;
+        this.proactiveUiScale = ConversationUiLayout.ClampScale(proactiveUiScale);
+        this.onSaveProactiveUiScale = onSaveProactiveUiScale;
 
         drafts = new Dictionary<string, DraftState>(StringComparer.Ordinal)
         {
@@ -134,6 +150,26 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
             Game1.playSound("smallSelect");
             return;
         }
+        if (uiScaleDecrease.containsPoint(x, y))
+        {
+            AdjustConversationUiScale(-0.1f);
+            return;
+        }
+        if (uiScaleIncrease.containsPoint(x, y))
+        {
+            AdjustConversationUiScale(0.1f);
+            return;
+        }
+        if (proactiveUiScaleDecrease.containsPoint(x, y))
+        {
+            AdjustProactiveUiScale(-0.1f);
+            return;
+        }
+        if (proactiveUiScaleIncrease.containsPoint(x, y))
+        {
+            AdjustProactiveUiScale(0.1f);
+            return;
+        }
 
         if (Contains(baseUrlBox, x, y))
             SelectTextBox(baseUrlBox);
@@ -185,6 +221,10 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
         SetHoverScale(saveButton, x, y);
         SetHoverScale(testButton, x, y);
         SetHoverScale(clearKeyButton, x, y);
+        SetHoverScale(uiScaleDecrease, x, y);
+        SetHoverScale(uiScaleIncrease, x, y);
+        SetHoverScale(proactiveUiScaleDecrease, x, y);
+        SetHoverScale(proactiveUiScaleIncrease, x, y);
         upperRightCloseButton?.tryHover(x, y, 0.2f);
     }
 
@@ -213,6 +253,8 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
         apiKeyBox.Draw(b, drawShadow: false);
 
         DrawButton(b, clearKeyButton, drafts[activeProvider].ClearSavedKey ? "保留 Key" : "清除 Key", false);
+        DrawScaleControl(b, "普通对话框大小", uiScaleDecrease, uiScaleIncrease, conversationUiScale);
+        DrawScaleControl(b, "主动对话框大小", proactiveUiScaleDecrease, proactiveUiScaleIncrease, proactiveUiScale);
         DrawButton(b, testButton, pendingTest is null ? "测试连接" : "测试中…", pendingTest is not null);
         DrawButton(b, saveButton, "保存", false);
 
@@ -247,6 +289,10 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
         if (pendingTest is not null)
             return;
         StoreActiveDraft();
+        // The layout preference is independent from provider validation, so it can
+        // still be saved when the API profile needs correction.
+        onSaveConversationUiScale?.Invoke(conversationUiScale);
+        onSaveProactiveUiScale?.Invoke(proactiveUiScale);
         AiSettingsSaveResult result = onSave(CreateDraft());
         if (!result.Success)
         {
@@ -363,6 +409,12 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
         PositionTextBox(apiKeyBox, fieldX, keyY, Math.Max(280, fieldWidth - clearWidth - 12));
         clearKeyButton.bounds = new Rectangle(apiKeyBox.X + apiKeyBox.Width + 12, keyY, clearWidth, ControlHeight);
 
+        int scaleY = keyY + ControlHeight + 18;
+        uiScaleDecrease.bounds = new Rectangle(fieldX, scaleY, 56, ControlHeight);
+        uiScaleIncrease.bounds = new Rectangle(fieldX + 164, scaleY, 56, ControlHeight);
+        proactiveUiScaleDecrease.bounds = new Rectangle(fieldX + 300, scaleY, 56, ControlHeight);
+        proactiveUiScaleIncrease.bounds = new Rectangle(fieldX + 464, scaleY, 56, ControlHeight);
+
         int buttonY = yPositionOnScreen + height - 72;
         saveButton.bounds = new Rectangle(xPositionOnScreen + width - PanelMargin - 126, buttonY, 126, 48);
         testButton.bounds = new Rectangle(saveButton.bounds.X - 150, buttonY, 138, 48);
@@ -446,6 +498,47 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
             label,
             new Vector2(bounds.Center.X - size.X / 2f, bounds.Center.Y - size.Y / 2f),
             disabled ? Color.DarkGray : Game1.textColor);
+    }
+
+    private static void DrawScaleControl(
+        SpriteBatch b,
+        string label,
+        ClickableComponent decrease,
+        ClickableComponent increase,
+        float value)
+    {
+        DrawLabel(b, label, decrease.bounds.X, decrease.bounds.Y - 26);
+        DrawButton(b, decrease, "-", false);
+        DrawButton(b, increase, "+", false);
+
+        string valueText = $"{value * 100f:0}%";
+        Vector2 size = Game1.smallFont.MeasureString(valueText);
+        b.DrawString(
+            Game1.smallFont,
+            valueText,
+            new Vector2(
+                decrease.bounds.Right
+                    + (increase.bounds.Left - decrease.bounds.Right - size.X) / 2f,
+                decrease.bounds.Center.Y - size.Y / 2f),
+            Game1.textColor);
+    }
+
+    private void AdjustConversationUiScale(float delta)
+    {
+        conversationUiScale = ConversationUiLayout.ClampScale(
+            MathF.Round((conversationUiScale + delta) * 10f) / 10f);
+        statusText = $"对话框大小：{conversationUiScale * 100f:0}%（保存后生效）";
+        statusColor = Game1.textColor;
+        Game1.playSound("smallSelect");
+    }
+
+    private void AdjustProactiveUiScale(float delta)
+    {
+        proactiveUiScale = ConversationUiLayout.ClampScale(
+            MathF.Round((proactiveUiScale + delta) * 10f) / 10f);
+        statusText = $"主动对话框大小：{proactiveUiScale * 100f:0}%（保存后生效）";
+        statusColor = Game1.textColor;
+        Game1.playSound("smallSelect");
     }
 
     private static void SetHoverScale(ClickableComponent component, int x, int y)

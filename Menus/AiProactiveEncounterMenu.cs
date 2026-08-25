@@ -17,6 +17,7 @@ public sealed class AiProactiveEncounterMenu : IClickableMenu
     private readonly string npcName;
     private readonly string npcDisplayName;
     private readonly string dialogueText;
+    private readonly float proactiveUiScale;
     private readonly IReadOnlyList<AiProactiveChoice> choices;
     private readonly Func<string, bool> onChoose;
     private readonly Action onCancel;
@@ -36,10 +37,12 @@ public sealed class AiProactiveEncounterMenu : IClickableMenu
         IReadOnlyList<AiProactiveChoice> choices,
         Func<string, bool> onChoose,
         Action onCancel,
-        Action onClosed)
+        Action onClosed,
+        float proactiveUiScale = 1f)
     {
         this.npcName = npcName;
         this.npcDisplayName = npcDisplayName;
+        this.proactiveUiScale = ConversationUiLayout.ClampScale(proactiveUiScale);
         statusText = $"{npcDisplayName} 主动和你聊了起来";
         this.dialogueText = dialogueText;
         this.choices = choices?.Where(choice => choice is not null).Take(4).ToArray()
@@ -298,10 +301,21 @@ public sealed class AiProactiveEncounterMenu : IClickableMenu
     private void Reposition()
     {
         int availableWidth = Math.Max(440, Game1.uiViewport.Width - HorizontalMargin * 2);
-        width = Math.Min(960, availableWidth);
+        int baseWidth = Math.Min(960, availableWidth);
+        width = ConversationUiLayout.ScaleWithinBounds(
+            baseWidth,
+            proactiveUiScale,
+            Math.Min(440, availableWidth),
+            availableWidth);
         int rows = (choiceButtons.Count + 1) / 2;
         int desiredHeight = 300 + Math.Max(0, rows - 1) * 54;
-        height = Math.Min(desiredHeight, Math.Max(248, Game1.uiViewport.Height - BottomMargin * 2));
+        int availableHeight = Math.Max(248, Game1.uiViewport.Height - BottomMargin * 2);
+        int baseHeight = Math.Min(desiredHeight, availableHeight);
+        height = ConversationUiLayout.ScaleWithinBounds(
+            baseHeight,
+            proactiveUiScale,
+            Math.Min(248, availableHeight),
+            availableHeight);
         xPositionOnScreen = (Game1.uiViewport.Width - width) / 2;
         yPositionOnScreen = Math.Max(8, Game1.uiViewport.Height - height - BottomMargin);
 

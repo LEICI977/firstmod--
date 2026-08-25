@@ -14,6 +14,7 @@ public sealed class AiChatInputMenu : IClickableMenu
     private const int ComposerHeight = 126;
 
     private readonly string npcDisplayName;
+    private readonly float conversationUiScale;
     private readonly Action<string> onSubmit;
     private readonly Action onCancel;
     private readonly Action onOpenSettings;
@@ -27,9 +28,11 @@ public sealed class AiChatInputMenu : IClickableMenu
         string npcDisplayName,
         Action<string> onSubmit,
         Action onCancel,
-        Action onOpenSettings)
+        Action onOpenSettings,
+        float conversationUiScale = 1f)
     {
         this.npcDisplayName = npcDisplayName;
+        this.conversationUiScale = ConversationUiLayout.ClampScale(conversationUiScale);
         this.onSubmit = onSubmit;
         this.onCancel = onCancel;
         this.onOpenSettings = onOpenSettings;
@@ -213,9 +216,18 @@ public sealed class AiChatInputMenu : IClickableMenu
 
     private void Reposition()
     {
-        int availableWidth = Math.Max(360, Game1.uiViewport.Width - HorizontalMargin * 2);
-        width = Math.Min(860, availableWidth);
-        height = Math.Min(ComposerHeight, Math.Max(108, Game1.uiViewport.Height - BottomMargin * 2));
+        width = ConversationUiLayout.CalculateWidth(
+            Game1.uiViewport.Width,
+            HorizontalMargin,
+            conversationUiScale,
+            viewportRatio: 0.68f,
+            minimumWidth: 560);
+        height = ConversationUiLayout.CalculateHeight(
+            Game1.uiViewport.Height,
+            BottomMargin,
+            conversationUiScale,
+            viewportRatio: 0.14f,
+            minimumHeight: Math.Min(108, ComposerHeight));
         xPositionOnScreen = (Game1.uiViewport.Width - width) / 2;
         yPositionOnScreen = Math.Max(8, Game1.uiViewport.Height - height - BottomMargin);
 
