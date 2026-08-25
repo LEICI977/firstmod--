@@ -64,7 +64,8 @@ def normalize_request(state: GraphState) -> GraphState:
     allowed_tools = snapshot.get("allowedTools") or []
     allowed_destinations = snapshot.get("allowedMoveDestinations") or []
     mine_guard_available = snapshot.get("mineGuardAvailable") is True
-    if allowed_tools or allowed_destinations or mine_guard_available:
+    fishing_available = snapshot.get("fishingCompanionAvailable") is True
+    if allowed_tools or allowed_destinations or mine_guard_available or fishing_available:
         if not isinstance(bridge, dict) or not str(bridge.get("baseUrl", "")).strip():
             raise ValueError("gameBridge is required when provider tools are available")
         if not str(bridge.get("token", "")).strip():
@@ -81,6 +82,7 @@ def build_initial_messages(request: dict[str, Any]) -> list[AnyMessage]:
     personality_instruction = str(snapshot.get("personality", "")).strip()
     session_facts = snapshot.get("recentSessionFacts") or []
     mine_guard_intent = has_mine_guard_intent(snapshot)
+    fishing_intent = has_fishing_intent(snapshot)
     if isinstance(session_facts, list):
         clean_session_facts = [
             str(fact).strip()
@@ -130,12 +132,26 @@ def build_initial_messages(request: dict[str, Any]) -> list[AnyMessage]:
         "如果 NPC 不愿意、条件不足或只是想聊天，必须调用 submit_final_response 自然拒绝、推迟或继续对话。"
         "它不接受楼层、武器、伤害、怪物或击杀数量参数；战斗结果只能由游戏桥接返回。"
     )
+    system_prompt += (
+        "\\n\\n【钓鱼同行工具规则】"
+        "invite_fishing_companion 表示 NPC 自主决定接受和玩家一起钓鱼，不是命令，也不是看到‘一起钓鱼’就必须调用。"
+        "只有 NPC 按自己的原版性格、关系、动机和当前情况确实愿意，并且 fishing_companion_available 为 true 时才调用。"
+        "玩家确认后 NPC 会靠近玩家等待玩家真实抛竿；NPC 使用默认铱金鱼竿做出完整钓鱼动作，真实鱼获由游戏生成并交给玩家。"
+        "工具不接受地点、鱼种、鱼竿、数量或成功率参数；不要编造已经钓到鱼，直到游戏桥接返回成功。"
+    )
     if mine_guard_intent:
         system_prompt += (
             "\\n\\n【本轮明确的下矿护卫意图】"
             "玩家本轮表达的是一起下矿、陪同下矿、保护下矿、下矿打怪或类似护卫请求。"
             "这类请求不要改用普通 move_to 代替；先由 NPC 自己决定是否愿意。"
             "愿意且工具可用时调用 invite_mine_guard；不愿意或不可用时直接调用 submit_final_response，不要编造已经出发。"
+        )
+    if fishing_intent:
+        system_prompt += (
+            "\\n\\n【本轮明确的钓鱼同行意图】"
+            "玩家本轮表达的是一起钓鱼、陪同钓鱼、去钓鱼或类似请求。"
+            "这类请求不要改用普通 move_to 代替；先由 NPC 自己决定是否愿意。"
+            "愿意且工具可用时调用 invite_fishing_companion；不愿意或不可用时直接调用 submit_final_response，不要编造已经出发。"
         )
     if personality_instruction:
         system_prompt += (
@@ -150,19 +166,15 @@ def build_initial_messages(request: dict[str, Any]) -> list[AnyMessage]:
             "display_name": snapshot.get("npcDisplayName"),
             "identity": snapshot.get("identity", ""),
         },
-        "mood": snapshot.get("mood", ""),
-        "relationship": snapshot.get("relationship", ""),
-        "goal": snapshot.get("goal", ""),
-        "world_state": snapshot.get("worldState", ""),
-        "player_progress": snapshot.get("playerProgress", ""),
         "occasional_memory_recall": snapshot.get("memorySummary", ""),
-        "recent_session_facts": clean_session_facts,
         "recent_messages": snapshot.get("recentMessages", []),
         "narrative_context": snapshot.get("narrativeContext", ""),
         "activity_summary": snapshot.get("activitySummary", ""),
         "allowed_tools": snapshot.get("allowedTools", []),
         "allowed_move_destinations": snapshot.get("allowedMoveDestinations", []),
         "mine_guard_available": snapshot.get("mineGuardAvailable") is True,
+        "fishing_companion_available": snapshot.get("fishingCompanionAvailable") is True,
+        "fishing_intent": fishing_intent,
         "mine_guard_intent": mine_guard_intent,
         "day": request.get("day"),
         "location": request.get("location"),
@@ -206,11 +218,27 @@ def has_mine_guard_intent(snapshot: dict[str, Any]) -> bool:
     return any(marker.replace(" ", "") in text for marker in english_markers)
 
 
+def has_fishing_intent(snapshot: dict[str, Any]) -> bool:
+    raw = str(snapshot.get("playerInput", ""))
+    text = "".join(raw.split()).lower()
+    if not text:
+        return False
+    fishing_terms = ("钓鱼", "钓竿", "鱼竿", "抛竿", "甩竿", "鱼塘", "海钓", "钓鱼点")
+    movement_terms = ("一起", "陪我", "跟我", "和我", "带你", "带我", "去", "来", "陪")
+    if any(term in text for term in fishing_terms) and any(term in text for term in movement_terms):
+        return True
+    return any(marker in text for marker in (
+        "invite_fishing_companion", "fishwithme", "gofishingwithme", "accompanymefishing",
+    ))
+
+
 def provider_tool_definitions(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     candidates = snapshot.get("allowedTools") or []
     destinations = snapshot.get("allowedMoveDestinations") or []
     mine_guard_available = snapshot.get("mineGuardAvailable") is True
     mine_guard_intent = has_mine_guard_intent(snapshot)
+    fishing_available = snapshot.get("fishingCompanionAvailable") is True
+    fishing_intent = has_fishing_intent(snapshot)
     definitions: list[dict[str, Any]] = []
     if isinstance(candidates, list) and candidates:
         definitions.append({
@@ -241,14 +269,14 @@ def provider_tool_definitions(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
                 },
             },
         })
-    if isinstance(destinations, list) and destinations and not mine_guard_intent:
+    if isinstance(destinations, list) and destinations and not mine_guard_intent and not fishing_intent:
         definitions.append({
             "type": "function",
             "function": {
                 "name": "move_to",
                 "description": (
                     "执行 NPC 已按自身性格和关系独立决定接受玩家目的地请求或主动提出的共同旅行。"
-                    "矿洞、矿井、矿坑和下矿请求不属于此工具，必须使用 invite_mine_guard。"
+            "矿洞、矿井、矿坑和下矿请求不属于此工具，必须使用 invite_mine_guard。"
                     "玩家提出目的地不等于同意；关系、角色兴趣、地点和独立同行理由必须全部吻合，不确定就拒绝。"
                     "两种合法情况都必须等待玩家确认。地点讨论或含糊提议不能触发。"
                     "destination_key 表示双方要去的最终地点，绝不能用中转地图替代。"
@@ -281,6 +309,23 @@ def provider_tool_definitions(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
                     "邀请 NPC 自主决定是否陪玩家下矿担任护卫。玩家提出一起下矿不等于 NPC 必须接受，"
                     "只有当前性格、关系、可用状态和真实动机都支持 NPC 真心同意时才调用；不愿意或条件不足时直接提交自然回复。"
                     "此工具不接受楼层、武器、伤害、怪物或击杀数量参数，实际移动和战斗结果由游戏决定。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+            },
+        })
+    if fishing_available:
+        definitions.append({
+            "type": "function",
+            "function": {
+                "name": "invite_fishing_companion",
+                "description": (
+                    "邀请 NPC 自主决定是否和玩家一起钓鱼。玩家提出一起钓鱼不等于 NPC 必须接受；"
+                    "只有角色性格、关系、动机和当前情况都支持真心同意时才调用。工具不接受地点、鱼种、鱼竿或数量参数；"
+                    "玩家确认后 NPC 会靠近玩家等待玩家真实抛竿，使用默认铱金鱼竿进行钓鱼，并把真实鱼获交给玩家。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -404,6 +449,22 @@ def make_tools(request: dict[str, Any]) -> list[StructuredTool]:
         }
         return json.dumps(call_game_bridge(bridge, payload), ensure_ascii=False)
 
+    def invite_fishing_companion(
+        tool_call_id: Annotated[str, InjectedToolCallId] = "",
+    ) -> str:
+        payload_tool_call_id = tool_call_id or "missing-tool-call-id"
+        bridge = request["gameBridge"]
+        payload = {
+            "requestId": request.get("requestId", ""),
+            "toolCallId": payload_tool_call_id,
+            "playerId": request.get("playerId", ""),
+            "npcName": request.get("npcName", ""),
+            "actionId": request.get("actionId", ""),
+            "contextVersion": request.get("contextVersion", ""),
+            "tool": "invite_fishing_companion",
+        }
+        return json.dumps(call_game_bridge(bridge, payload), ensure_ascii=False)
+
     return [
         StructuredTool.from_function(
             func=give_gift,
@@ -419,6 +480,11 @@ def make_tools(request: dict[str, Any]) -> list[StructuredTool]:
             func=invite_mine_guard,
             name="invite_mine_guard",
             description="通过真实 SMAPI 游戏桥接开始 NPC 下矿护卫会话。是否接受必须由 NPC 自主决定。",
+        ),
+        StructuredTool.from_function(
+            func=invite_fishing_companion,
+            name="invite_fishing_companion",
+            description="通过真实 SMAPI 游戏桥接开始 NPC 钓鱼同行会话。是否接受必须由 NPC 自主决定。",
         ),
     ]
 
@@ -443,7 +509,7 @@ def choose_action(state: GraphState) -> GraphState:
             if not str(call.get("id", "")).strip():
                 raise ValueError("provider tool call is missing an ID")
             tool_name = str(call.get("name", "")).strip().lower()
-            if tool_name not in {"give_gift", "move_to", "invite_mine_guard", "submit_final_response"}:
+            if tool_name not in {"give_gift", "move_to", "invite_mine_guard", "invite_fishing_companion", "submit_final_response"}:
                 raise ValueError(f"provider returned unknown conversation tool: {tool_name}")
             args = call.get("args") or {}
             if tool_name == "submit_final_response":
@@ -452,6 +518,8 @@ def choose_action(state: GraphState) -> GraphState:
                 validate_move_args(args, request["contextSnapshot"])
             elif tool_name == "invite_mine_guard":
                 validate_mine_guard_args(args, request["contextSnapshot"])
+            elif tool_name == "invite_fishing_companion":
+                validate_fishing_args(args, request["contextSnapshot"])
             else:
                 validate_gift_args(args, request["contextSnapshot"])
             result: GraphState = {
@@ -498,6 +566,8 @@ def route_after_choice(state: GraphState) -> str:
         return "confirm_move"
     if tool_name == "invite_mine_guard":
         return "confirm_mine_guard"
+    if tool_name == "invite_fishing_companion":
+        return "confirm_fishing"
     if tool_name == "submit_final_response":
         return "complete"
     raise ValueError("conversation tool call is missing a valid route")
@@ -592,6 +662,43 @@ def confirm_mine_guard(state: GraphState) -> GraphState:
     }
 
 
+def confirm_fishing(state: GraphState) -> GraphState:
+    request = state["normalized"]
+    tool_call = state.get("tool_call") or {}
+    if request["contextSnapshot"].get("fishingCompanionAvailable") is not True:
+        raise ValueError("fishing companion is not available in the current context")
+    approval = interrupt({
+        "kind": "fishing_confirmation",
+        "tool_call_id": str(tool_call.get("id", "")),
+        "destination_key": "",
+        "display_name": "钓鱼地点",
+        "npc_display_name": str(request["contextSnapshot"].get("npcDisplayName", "")).strip(),
+    })
+    approved = isinstance(approval, dict) and approval.get("approved") is True
+    if approved:
+        return {"move_approved": True}
+    execution = {
+        "requestId": request.get("requestId", ""),
+        "toolCallId": str(tool_call.get("id", "")),
+        "contextVersion": request.get("contextVersion", ""),
+        "tool": "invite_fishing_companion",
+        "status": "rejected",
+        "ok": False,
+        "reason_code": "player_declined",
+        "message": "玩家没有同意开始钓鱼同行。",
+        "receipt_id": f"{request.get('requestId', '')}:{tool_call.get('id', '')}:declined",
+    }
+    return {
+        "move_approved": False,
+        "tool_execution": execution,
+        "messages": [ToolMessage(
+            content=json.dumps(execution, ensure_ascii=False),
+            tool_call_id=str(tool_call.get("id", "")),
+            name="invite_fishing_companion",
+        )],
+    }
+
+
 def route_after_move_confirmation(state: GraphState) -> str:
     return "tool_node" if state.get("move_approved") is True else "finalize"
 
@@ -612,34 +719,23 @@ def capture_tool_result(state: GraphState) -> GraphState:
 
 def finalize(state: GraphState) -> GraphState:
     request = state["normalized"]
-    personality_instruction = str(request["contextSnapshot"].get("personality", "")).strip()
     final_instruction = HumanMessage(
         content=(
-            "现在通过调用 submit_final_response 生成 NPC 的最终回复。"
-            "使用 schema_version 1 和 decision 'reply'。严格遵循刚刚重申的原版 NPC 身份与人格要求以及"
-            "SystemPrompt 中的实时关系事实；工具结果只约束实际发生的"
-            "游戏事实，不改变角色如何表达。回复必须是自然的第一人称对话文本，"
-            "遵循权威的工具执行结果，绝不要编造成功的交付、动身或到达，也不要暴露工具协议。"
-            "只有工具结果明确表示 move_to 已成功开始同行时，travel_barks 才生成 2 到 3 句"
-            "简短、第一人称、符合当前角色性格的途中自然台词，不写角色名前缀或舞台说明；"
-            "否则 travel_barks 必须是空数组。"
+            "现在调用 submit_final_response 生成最终回复，schema_version=1、decision='reply'。"
+            "沿用上方 SystemPrompt 中完整的原版 NPC 身份、人格和实时关系事实；"
+            "工具结果只约束实际发生的游戏事实，不改变角色表达。"
+            "回复使用自然的第一人称对话，不编造礼物交付、动身或到达，不暴露工具协议。"
+            "只有 move_to 工具结果明确表示同行已成功开始时，travel_barks 才返回 2-3 句途中台词；钓鱼同行和下矿护卫必须返回空数组。"
         )
     )
-    messages = list(state["messages"])
+    messages = build_final_context(state)
     messages.append(HumanMessage(
         content=(
-            "权威下矿护卫规则：invite_mine_guard 只表示护卫会话已经开始。"
+            "权威事实规则：invite_mine_guard 只表示护卫会话已开始。"
             "不要编造矿井楼层、武器、伤害、怪物或击杀结果；这些事实只能来自游戏桥接。"
+            "invite_fishing_companion 只表示钓鱼同行会话已开始；不要声称已经抛竿、咬钩或钓到具体鱼，除非游戏桥接明确返回了对应结果。"
         )
     ))
-    if personality_instruction:
-        messages.append(SystemMessage(
-            content=(
-                "【最终回复原版人格要求】\n" + personality_instruction + "\n"
-                "这不是要求复述的资料，而是本次措辞、态度、篇幅和拒绝方式的硬约束。"
-                "不得为了友好或解释工具结果而软化角色。"
-            )
-        ))
     messages.append(final_instruction)
     tools = [final_response_tool_definition()]
     last_error: Exception | None = None
@@ -665,7 +761,7 @@ def finalize(state: GraphState) -> GraphState:
             last_error = error
             if attempt == 1:
                 raise
-            messages = list(state["messages"])
+            messages = build_final_context(state)
             messages.append(HumanMessage(
                 content=(
                     "协议纠正：现在必须调用 submit_final_response。所有字段"
@@ -673,7 +769,76 @@ def finalize(state: GraphState) -> GraphState:
                     "reply，travel_barks 必须是字符串数组，所有 signal 值必须是数字。"
                 )
             ))
+            messages.append(final_instruction)
     raise ValueError(f"provider final response failed: {last_error}")
+
+
+def build_final_context(state: GraphState) -> list[AnyMessage]:
+    """Keep the final pass grounded while avoiding a second copy of the full snapshot."""
+    request = state["normalized"]
+    snapshot = request["contextSnapshot"]
+    source_messages = state.get("messages", [])
+    system_message = next(
+        (message for message in source_messages if message.type == "system"),
+        None,
+    )
+    system_prompt = str(
+        system_message.content if system_message is not None
+        else snapshot.get("systemPrompt", "")
+    ).strip()
+    recent_messages = snapshot.get("recentMessages") or []
+    if not isinstance(recent_messages, list):
+        recent_messages = []
+    compact_payload = {
+        "npc": {
+            "name": snapshot.get("npcName"),
+            "display_name": snapshot.get("npcDisplayName"),
+        },
+        "occasional_memory_recall": snapshot.get("memorySummary", ""),
+        "recent_messages": recent_messages[-8:],
+        "narrative_context": snapshot.get("narrativeContext", ""),
+        "activity_summary": snapshot.get("activitySummary", ""),
+        "player_input": snapshot.get("playerInput", ""),
+        "day": request.get("day"),
+        "location": request.get("location"),
+    }
+    messages: list[AnyMessage] = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(
+            content="【最终回复所需的压缩上下文】\n"
+            + json.dumps(compact_payload, ensure_ascii=False)
+        ),
+    ]
+
+    tool_call = state.get("tool_call") or {}
+    if tool_call:
+        messages.append(AIMessage(
+            content="",
+            tool_calls=[{
+                "name": str(tool_call.get("name", "")),
+                "args": tool_call.get("args") or {},
+                "id": str(tool_call.get("id", "")),
+                "type": "tool_call",
+            }],
+        ))
+        tool_message = next(
+            (message for message in reversed(source_messages) if message.type == "tool"),
+            None,
+        )
+        if tool_message is not None:
+            messages.append(tool_message)
+    else:
+        draft = next(
+            (
+                str(message.content).strip()
+                for message in reversed(source_messages)
+                if message.type == "ai" and str(message.content).strip()
+            ),
+            "",
+        )
+        if draft:
+            messages.append(HumanMessage(content="【行动阶段草稿，仅供参考】\n" + draft))
+    return messages
 
 
 def validate_final_response_args(value: Any) -> None:
@@ -752,6 +917,13 @@ def validate_mine_guard_args(value: Any, snapshot: dict[str, Any]) -> None:
         raise ValueError("invite_mine_guard is outside the current allowlist")
 
 
+def validate_fishing_args(value: Any, snapshot: dict[str, Any]) -> None:
+    if not isinstance(value, dict) or value:
+        raise ValueError("invite_fishing_companion accepts no arguments")
+    if snapshot.get("fishingCompanionAvailable") is not True:
+        raise ValueError("invite_fishing_companion is outside the current allowlist")
+
+
 def normalize_final_output(state: GraphState) -> GraphState:
     decision = state["decision"]
     if not isinstance(decision, dict):
@@ -763,7 +935,7 @@ def normalize_final_output(state: GraphState) -> GraphState:
     candidate_key = args.get("candidate_key") if tool_name == "give_gift" else None
     destination_key = args.get("destination_key") if tool_name == "move_to" else None
     action = {
-        "name": tool_name if tool_name in {"give_gift", "move_to", "invite_mine_guard"} else "none",
+        "name": tool_name if tool_name in {"give_gift", "move_to", "invite_mine_guard", "invite_fishing_companion"} else "none",
         "candidate_key": candidate_key,
         "destination_key": destination_key,
         "delivery": "immediate",
@@ -781,19 +953,19 @@ def normalize_final_output(state: GraphState) -> GraphState:
         raise ValueError("unsupported schema_version")
     if normalized["decision"] != "reply":
         raise ValueError("decision must be reply")
-    if normalized["action"]["name"] not in {"none", "give_gift", "mail_gift", "move_to", "invite_mine_guard"}:
+    if normalized["action"]["name"] not in {"none", "give_gift", "mail_gift", "move_to", "invite_mine_guard", "invite_fishing_companion"}:
         raise ValueError("unknown action name")
     if normalized["action"]["name"] == "give_gift" and not normalized["action"]["candidate_key"]:
         raise ValueError("gift action requires candidate_key")
     if normalized["action"]["name"] == "move_to" and not normalized["action"]["destination_key"]:
         raise ValueError("move_to action requires destination_key")
-    if normalized["action"]["name"] == "invite_mine_guard" and (
+    if normalized["action"]["name"] in {"invite_mine_guard", "invite_fishing_companion"} and (
         normalized["action"]["candidate_key"] or normalized["action"]["destination_key"]
     ):
         raise ValueError("invite_mine_guard action cannot contain arguments")
     if not normalized["reply"]:
         raise ValueError("reply is empty")
-    if tool_name in {"give_gift", "move_to", "invite_mine_guard"} and not execution:
+    if tool_name in {"give_gift", "move_to", "invite_mine_guard", "invite_fishing_companion"} and not execution:
         raise ValueError("tool call is missing execution result")
     if tool_name != "move_to" or execution.get("ok") is not True:
         normalized["travel_barks"] = []
@@ -823,6 +995,7 @@ def build_graph(request: dict[str, Any], checkpointer: Any = None):
     graph.add_node("choose_action", choose_action)
     graph.add_node("confirm_move", confirm_move)
     graph.add_node("confirm_mine_guard", confirm_mine_guard)
+    graph.add_node("confirm_fishing", confirm_fishing)
     graph.add_node("tool_node", ToolNode(tools))
     graph.add_node("capture_tool_result", capture_tool_result)
     graph.add_node("finalize", finalize)
@@ -836,6 +1009,7 @@ def build_graph(request: dict[str, Any], checkpointer: Any = None):
             "tool_node": "tool_node",
             "confirm_move": "confirm_move",
             "confirm_mine_guard": "confirm_mine_guard",
+            "confirm_fishing": "confirm_fishing",
             "finalize": "finalize",
             "complete": "normalize_final_output",
         },
@@ -850,6 +1024,14 @@ def build_graph(request: dict[str, Any], checkpointer: Any = None):
     )
     graph.add_conditional_edges(
         "confirm_mine_guard",
+        route_after_move_confirmation,
+        {
+            "tool_node": "tool_node",
+            "finalize": "finalize",
+        },
+    )
+    graph.add_conditional_edges(
+        "confirm_fishing",
         route_after_move_confirmation,
         {
             "tool_node": "tool_node",
@@ -886,7 +1068,7 @@ def call_provider(
         payload["tool_choice"] = "auto" if tool_choice is None else tool_choice
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
-    max_tokens = max(128, min(int(llm.get("maxOutputTokens", 4096)), 32768))
+    max_tokens = max(128, min(int(llm.get("maxOutputTokens", 2048)), 2048))
     if provider == "openai":
         payload["max_completion_tokens"] = max_tokens
     else:
@@ -918,6 +1100,25 @@ def call_provider(
         message = parsed["choices"][0]["message"]
         if not isinstance(message, dict):
             raise ValueError("assistant message is not an object")
+        usage = parsed.get("usage")
+        if isinstance(usage, dict):
+            usage_values = []
+            for label, keys in (
+                ("prompt", ("prompt_tokens", "input_tokens")),
+                ("completion", ("completion_tokens", "output_tokens")),
+                ("total", ("total_tokens",)),
+                ("cache_hit", ("prompt_cache_hit_tokens", "cache_read_input_tokens")),
+                ("cache_miss", ("prompt_cache_miss_tokens", "cache_creation_input_tokens")),
+            ):
+                value = next((usage.get(key) for key in keys if usage.get(key) is not None), None)
+                if value is not None:
+                    usage_values.append(f"{label}={value}")
+            if usage_values:
+                print(
+                    f"[langgraph] provider_usage requestId={request.get('requestId', '')} "
+                    + " ".join(usage_values),
+                    flush=True,
+                )
         return message
     except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as error:
         raise RuntimeError(
@@ -1096,7 +1297,7 @@ def start_graph_request(request: dict[str, Any]) -> dict[str, Any]:
         return completed_graph_response(request, result)
 
     value = getattr(interruptions[0], "value", None)
-    if not isinstance(value, dict) or value.get("kind") not in {"move_confirmation", "mine_guard_confirmation"}:
+    if not isinstance(value, dict) or value.get("kind") not in {"move_confirmation", "mine_guard_confirmation", "fishing_confirmation"}:
         raise ValueError("graph returned an unknown interrupt")
     resume_token = secrets.token_urlsafe(32)
     with pending_graph_lock:

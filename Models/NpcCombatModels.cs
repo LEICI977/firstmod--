@@ -69,9 +69,9 @@ public sealed class NpcCombatState
 
     public NpcWeaponSnapshot? Weapon { get; set; }
 
-    public int MaxHealth { get; set; } = 100;
+    public int MaxHealth { get; set; } = 1200;
 
-    public int CurrentHealth { get; set; } = 100;
+    public int CurrentHealth { get; set; } = 1200;
 
     /// <summary>First day on which normal behavior is allowed again; zero means not hospitalized.</summary>
     public int HospitalReleaseDay { get; set; }

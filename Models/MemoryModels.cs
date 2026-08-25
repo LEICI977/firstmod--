@@ -301,10 +301,10 @@ public sealed class ConversationEngineOptions
     public string ReasoningEffort { get; set; } = "low";
 
     /// <summary>Maximum number of recent uncompressed messages sent with a chat request.</summary>
-    public int MaxContextMessages { get; set; } = 32;
+    public int MaxContextMessages { get; set; } = 24;
 
     /// <summary>Maximum output tokens requested for either summarization or a normal reply.</summary>
-    public int MaxOutputTokens { get; set; } = 4096;
+    public int MaxOutputTokens { get; set; } = 2048;
 
     /// <summary>
     /// A summary is attempted when adding the next user/assistant pair would

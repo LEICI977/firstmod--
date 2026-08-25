@@ -30,6 +30,9 @@ public sealed class NpcMineGuardService
         return GetAvailabilityReason(npc, playerLocation) is null;
     }
 
+    public bool HasActiveSession(string? npcName)
+        => !string.IsNullOrWhiteSpace(npcName) && sessions.ContainsKey(npcName);
+
     /// <summary>
     /// Returns the authoritative reason why the mine-guard tool is unavailable.
     /// A null result means the game can start the session if the NPC chooses to accept.
@@ -149,14 +152,25 @@ internal sealed class NpcMineGuardSession
     private const int PathRetryTicks = 20;
     private const int MinimumFollowDistance = 1;
     private const int MaximumFollowDistance = 2;
-    private const int PlayerCombatSearchRadius = 8;
+    private const int CombatSearchRadius = 8;
+    // Keep an engaged monster locked through a short knockback.
+    private const int CombatTargetRetentionRadius = 12;
+    private const int MaximumCombatDistanceFromPlayer = 8;
+    // Replanning on every small player/monster movement makes the NPC repeatedly
+    // stop and restart its controller. Keep the current approach until the target
+    // actually changes position or the route has had time to make progress.
+    private const int CombatReplanIntervalTicks = 15;
+    private const int CombatRetryDelayTicks = 3;
     private const int HealthBarWidth = 72;
     private const int HealthBarHeight = 6;
     private const int HealthBarGap = 4;
-    // Keep the attack readable while avoiding a long stationary window in which
-    // the NPC can be hit repeatedly by a monster.
-    private const int AttackAnimationTicks = 6;
-    private const int AttackImpactTick = 3;
+    // The vanilla sword animation has six visible frames. NPCs cannot use
+    // MeleeWeapon.setFarmerAnimating directly because that API requires a Farmer
+    // and FarmerSprite, so the session drives the same weapon frames itself.
+    private const int AttackFrameCount = 6;
+    private const int AttackFrameTicks = 3;
+    private const int AttackAnimationTicks = AttackFrameCount * AttackFrameTicks;
+    private const int AttackImpactFrame = 3;
 
     private readonly NPC npc;
     private readonly Farmer leader;
@@ -176,7 +190,11 @@ internal sealed class NpcMineGuardSession
     private int pathRetryTicks;
     private int combatRetryTicks;
     private int attackAnimationTicks;
+    private int attackFacingDirection;
+    private int combatReplanTicks;
     private Monster? attackTarget;
+    private Monster? combatTarget;
+    private Point plannedCombatTargetTile;
     private bool attackImpactApplied;
     private bool navigating;
     private bool combatNavigating;
@@ -290,77 +308,126 @@ internal sealed class NpcMineGuardSession
         if (bar.Width > 0)
             spriteBatch.Draw(Game1.staminaRect, bar, healthColor);
 
-        DrawAttackEffect(spriteBatch);
+        DrawAttackWeapon(spriteBatch);
+    }
 
-        if (weaponPreview is null)
+    /// <summary>Draw the original weapon sprite using the vanilla sword swing poses.</summary>
+    private void DrawAttackWeapon(SpriteBatch spriteBatch)
+    {
+        if (attackAnimationTicks <= 0
+            || weaponPreview is null)
+        {
             return;
+        }
 
-        Vector2 screen = npc.Position - new Vector2(Game1.viewport.X, Game1.viewport.Y);
         try
         {
-            weaponPreview.drawInMenu(
-                spriteBatch,
-                new Vector2(screen.X + 20, screen.Y - 52),
-                0.42f,
-                1f,
-                0f,
-                StackDrawType.Hide,
+            var data = ItemRegistry.GetDataOrErrorItem(weaponPreview.GetDrawnItemId());
+            Texture2D texture = data.GetTexture() ?? Tool.weaponsTexture;
+            Rectangle sourceRect = data.GetSourceRect();
+            int frame = GetAttackFrame();
+            GetVanillaSwordPose(
+                attackFacingDirection,
+                frame,
+                out Vector2 offset,
+                out float rotation,
+                out SpriteEffects effects);
+            Vector2 position = npc.Position
+                               - new Vector2(Game1.viewport.X, Game1.viewport.Y)
+                               + offset;
+            spriteBatch.Draw(
+                texture,
+                position,
+                sourceRect,
                 Color.White,
-                false);
+                rotation,
+                new Vector2(1f, 15f),
+                4f,
+                effects,
+                0.999f);
         }
-        catch
+        catch (Exception exception)
         {
-            // A custom weapon may not have a menu sprite; the combat still works.
+            monitor.Log(
+                $"invite_mine_guard weapon_draw_failed npc={npc.Name} reason={exception.Message}.",
+                LogLevel.Debug);
         }
     }
 
-    private void DrawAttackEffect(SpriteBatch spriteBatch)
+    private int GetAttackFrame()
     {
-        if (attackAnimationTicks <= 0
-            || attackTarget is null
-            || attackTarget.currentLocation is null
-            || !ReferenceEquals(attackTarget.currentLocation, npc.currentLocation))
+        int elapsed = AttackAnimationTicks - attackAnimationTicks;
+        return Math.Clamp(elapsed / AttackFrameTicks, 0, AttackFrameCount - 1);
+    }
+
+    /// <summary>
+    /// Positions and rotates the weapon exactly like the normal sword branch in
+    /// MeleeWeapon.drawDuringUse. The NPC uses the same item texture, but does not
+    /// borrow the player's FarmerSprite or mutate the player's facing direction.
+    /// </summary>
+    private static void GetVanillaSwordPose(
+        int facingDirection,
+        int frame,
+        out Vector2 offset,
+        out float rotation,
+        out SpriteEffects effects)
+    {
+        frame = Math.Clamp(frame, 0, AttackFrameCount - 1);
+        effects = SpriteEffects.None;
+        switch (facingDirection)
         {
-            return;
+            case 1:
+                (offset, rotation) = frame switch
+                {
+                    0 => (new Vector2(40f, -56f), -MathF.PI / 4f),
+                    1 => (new Vector2(56f, -36f), 0f),
+                    2 => (new Vector2(60f, -16f), MathF.PI / 4f),
+                    3 => (new Vector2(60f, -4f), MathF.PI / 2f),
+                    4 => (new Vector2(36f, 4f), MathF.PI * 5f / 8f),
+                    _ => (new Vector2(16f, 4f), MathF.PI * 3f / 4f),
+                };
+                break;
+            case 3:
+                effects = SpriteEffects.FlipHorizontally;
+                (offset, rotation) = frame switch
+                {
+                    0 => (new Vector2(-16f, -80f), MathF.PI / 4f),
+                    1 => (new Vector2(-48f, -44f), 0f),
+                    2 => (new Vector2(-32f, 16f), -MathF.PI / 4f),
+                    3 => (new Vector2(4f, 44f), -MathF.PI / 2f),
+                    4 => (new Vector2(44f, 52f), -MathF.PI * 5f / 8f),
+                    _ => (new Vector2(80f, 40f), -MathF.PI * 3f / 4f),
+                };
+                break;
+            case 0:
+                (offset, rotation) = frame switch
+                {
+                    0 => (new Vector2(32f, -32f), -MathF.PI * 3f / 4f),
+                    1 => (new Vector2(32f, -48f), -MathF.PI / 2f),
+                    2 => (new Vector2(48f, -52f), -MathF.PI * 3f / 8f),
+                    3 => (new Vector2(48f, -52f), -MathF.PI / 8f),
+                    4 => (new Vector2(56f, -40f), 0f),
+                    _ => (new Vector2(64f, -40f), MathF.PI / 8f),
+                };
+                break;
+            default:
+                (offset, rotation) = frame switch
+                {
+                    0 => (new Vector2(56f, -16f), MathF.PI / 8f),
+                    1 => (new Vector2(52f, -8f), MathF.PI / 2f),
+                    2 => (new Vector2(40f, 0f), MathF.PI / 2f),
+                    3 => (new Vector2(16f, 4f), MathF.PI * 3f / 4f),
+                    4 => (new Vector2(8f, 8f), MathF.PI),
+                    _ => (new Vector2(12f, 0f), 3.5342917f),
+                };
+                break;
         }
-
-        Vector2 start = npc.GetBoundingBox().Center.ToVector2()
-                        - new Vector2(Game1.viewport.X, Game1.viewport.Y);
-        Vector2 target = attackTarget.GetBoundingBox().Center.ToVector2()
-                         - new Vector2(Game1.viewport.X, Game1.viewport.Y);
-        Vector2 direction = target - start;
-        if (direction.LengthSquared() < 1f)
-            direction = FacingVector(npc.FacingDirection);
-        else
-            direction.Normalize();
-
-        Vector2 perpendicular = new(-direction.Y, direction.X);
-        float progress = 1f - attackAnimationTicks / (float)AttackAnimationTicks;
-        float sweep = MathF.Sin(progress * MathF.PI) * 18f;
-        Vector2 slashStart = start + direction * 10f + perpendicular * sweep;
-        Vector2 slashEnd = slashStart + direction * 48f - perpendicular * (sweep * 1.8f);
-        Vector2 delta = slashEnd - slashStart;
-        float length = delta.Length();
-        if (length < 1f)
-            return;
-
-        spriteBatch.Draw(
-            Game1.staminaRect,
-            slashStart,
-            null,
-            Color.Gold * 0.9f,
-            MathF.Atan2(delta.Y, delta.X),
-            Vector2.Zero,
-            new Vector2(length, 4f),
-            SpriteEffects.None,
-            0.999f);
     }
 
     private void UpdateCrossMapTransfer()
     {
         StopNavigation();
-        StopCombatNavigation();
-        StopAttackAnimation();
+        ClearCombatTarget("map_transfer");
         differentLocationTicks++;
         if (differentLocationTicks < CrossMapTransferDelayTicks)
             return;
@@ -437,33 +504,67 @@ internal sealed class NpcMineGuardSession
 
     private bool UpdateCombat(GameLocation location)
     {
+        if (attackCooldownTicks > 0)
+            attackCooldownTicks--;
+
         if (attackAnimationTicks > 0)
         {
             UpdateAttackAnimation(location);
             return true;
         }
 
-        // Mine guard duty protects the player; it never sends the NPC hunting across
-        // the floor. Only monsters within eight tiles of the player are candidates.
+        if (ManhattanDistance(npc.TilePoint, leader.TilePoint) > MaximumCombatDistanceFromPlayer)
+        {
+            ClearCombatTarget("player_leash_exceeded");
+            return false;
+        }
+
+        // Acquire around the guard, then constrain every approach path to the player's
+        // eight-tile leash so an engaged monster cannot pull the NPC across the floor.
+        // Retain the current target through a short knockback so it is not dropped
+        // between two update ticks merely because it left the acquisition ring.
         List<Monster> targets = location.characters
             .OfType<Monster>()
-            .Where(monster => monster.Health > 0 && !monster.IsInvisible)
-            .Where(monster => TileDistance(monster.TilePoint, leader.TilePoint) <= PlayerCombatSearchRadius)
-            .OrderBy(monster => TileDistance(monster.TilePoint, leader.TilePoint))
+            .Where(monster => IsValidCombatTarget(monster, location))
+            .Where(monster => ReferenceEquals(monster, combatTarget)
+                              ? ManhattanDistance(monster.TilePoint, npc.TilePoint) <= CombatTargetRetentionRadius
+                              : ManhattanDistance(monster.TilePoint, npc.TilePoint) <= CombatSearchRadius)
+            .OrderBy(monster => ReferenceEquals(monster, combatTarget) ? 0 : 1)
+            .ThenBy(monster => ManhattanDistance(monster.TilePoint, npc.TilePoint))
+            .ThenByDescending(monster => monster.DamageToFarmer)
+            .ThenBy(monster => ManhattanDistance(monster.TilePoint, leader.TilePoint))
             .ToList();
         if (targets.Count == 0)
         {
-            StopCombatNavigation();
+            ClearCombatTarget("no_target_in_range");
             combatRetryTicks = 0;
             return false;
         }
 
         if (combatNavigating)
         {
-            npc.speed = 7;
-            NpcNavigationStatus status = combatNavigation.Update(npc);
-            if (status == NpcNavigationStatus.Moving)
+            Monster? target = combatTarget;
+            combatReplanTicks++;
+            if (target is not null && IsInMeleeRange(target))
+            {
+                StopCombatNavigation();
+                if (attackCooldownTicks <= 0)
+                    BeginAttack(target);
                 return true;
+            }
+
+            bool mustReplan = target is null
+                              || !targets.Contains(target)
+                              || ManhattanDistance(target.TilePoint, plannedCombatTargetTile) > 1
+                              || combatReplanTicks >= CombatReplanIntervalTicks;
+            if (!mustReplan)
+            {
+                npc.speed = 8;
+                NpcNavigationStatus status = combatNavigation.Update(npc);
+                if (status == NpcNavigationStatus.Moving)
+                    return true;
+            }
+
             StopCombatNavigation();
         }
 
@@ -475,51 +576,58 @@ internal sealed class NpcMineGuardSession
 
         foreach (Monster target in targets)
         {
-            double distance = TileDistance(target.TilePoint, npc.TilePoint);
-            if (distance <= 2)
+            SetCombatTarget(target);
+            if (IsInMeleeRange(target))
             {
                 StopCombatNavigation();
                 if (attackCooldownTicks > 0)
-                {
-                    attackCooldownTicks--;
                     return true;
-                }
 
                 BeginAttack(target);
                 return true;
             }
 
-            if (pathfinder.TryFindPathToFollowRange(
+            if (pathfinder.TryFindPathToAdjacent(
                     location,
                     npc,
                     npc.TilePoint,
                     target.TilePoint,
-                    MinimumFollowDistance,
-                    MinimumFollowDistance,
-                    out IReadOnlyList<Point> path)
+                    leader.TilePoint,
+                    MaximumCombatDistanceFromPlayer,
+                    out IReadOnlyList<Point> path,
+                    out Point standingTile)
                 && path.Count > 1)
             {
                 StopNavigation();
-                npc.speed = 7;
+                npc.speed = 8;
                 combatNavigation.Start(path, npc);
                 combatNavigating = true;
+                plannedCombatTargetTile = target.TilePoint;
+                combatReplanTicks = 0;
                 combatRetryTicks = 0;
+                monitor.Log(
+                    $"invite_mine_guard approach_started npc={npc.Name} target={target.Name} "
+                    + $"standing={standingTile.X},{standingTile.Y} length={path.Count}.",
+                    LogLevel.Debug);
                 return true;
             }
         }
 
-        // A nearby target can still be behind a temporary obstacle. Keep following the
-        // player and retry the whole eight-tile scan instead of standing still.
-        combatRetryTicks = PathRetryTicks;
+        // A target may be behind a temporary monster or rock. Follow the player during
+        // the short retry window instead of freezing in place.
+        ClearCombatTarget("no_reachable_adjacent_tile");
+        combatRetryTicks = CombatRetryDelayTicks;
         return false;
     }
 
     private void BeginAttack(Monster target)
     {
+        SetCombatTarget(target);
         attackTarget = target;
         attackAnimationTicks = AttackAnimationTicks;
         attackImpactApplied = false;
-        npc.faceDirection(FacingDirection(npc.TilePoint, target.TilePoint));
+        attackFacingDirection = FacingDirection(npc.TilePoint, target.TilePoint);
+        npc.faceDirection(attackFacingDirection);
         npc.Halt();
         monitor.Log(
             $"invite_mine_guard attack_started npc={npc.Name} target={target.Name}.",
@@ -530,18 +638,15 @@ internal sealed class NpcMineGuardSession
     {
         Monster? target = attackTarget;
         if (target is null
-            || target.Health <= 0
-            || target.IsInvisible
-            || !ReferenceEquals(target.currentLocation, location))
+            || !IsValidCombatTarget(target, location))
         {
             StopAttackAnimation();
             return;
         }
 
-        npc.faceDirection(FacingDirection(npc.TilePoint, target.TilePoint));
-        npc.Halt();
+        int frame = GetAttackFrame();
         attackAnimationTicks--;
-        if (!attackImpactApplied && attackAnimationTicks <= AttackAnimationTicks - AttackImpactTick)
+        if (!attackImpactApplied && frame >= AttackImpactFrame)
         {
             attackImpactApplied = true;
             ApplyAttackDamage(location, target);
@@ -556,8 +661,10 @@ internal sealed class NpcMineGuardSession
 
     private void ApplyAttackDamage(GameLocation location, Monster target)
     {
-        Rectangle area = npc.GetBoundingBox();
-        area.Inflate(Game1.tileSize / 2, Game1.tileSize / 2);
+        Rectangle area = GetAttackArea(attackFacingDirection, AttackImpactFrame);
+        if (!area.Intersects(target.GetBoundingBox()))
+            return;
+
         int upgradeBonus = Math.Max(0, weapon.UpgradeLevel * 2);
         int minimumDamage = Math.Max(1, weapon.MinDamage + upgradeBonus);
         int maximumDamage = Math.Max(minimumDamage, weapon.MaxDamage + upgradeBonus);
@@ -599,6 +706,70 @@ internal sealed class NpcMineGuardSession
         attackImpactApplied = false;
     }
 
+    private void SetCombatTarget(Monster target)
+    {
+        if (ReferenceEquals(combatTarget, target))
+            return;
+
+        combatTarget = target;
+        plannedCombatTargetTile = target.TilePoint;
+        combatReplanTicks = 0;
+        monitor.Log(
+            $"invite_mine_guard target_acquired npc={npc.Name} target={target.Name} "
+            + $"npc_distance={ManhattanDistance(npc.TilePoint, target.TilePoint)}.",
+            LogLevel.Debug);
+    }
+
+    private void ClearCombatTarget(string reason)
+    {
+        Monster? previous = combatTarget;
+        StopCombatNavigation();
+        StopAttackAnimation();
+        combatTarget = null;
+        plannedCombatTargetTile = Point.Zero;
+        combatReplanTicks = 0;
+        if (previous is not null)
+        {
+            monitor.Log(
+                $"invite_mine_guard target_released npc={npc.Name} target={previous.Name} reason={reason}.",
+                LogLevel.Debug);
+        }
+    }
+
+    private bool IsInMeleeRange(Monster target)
+        => GetAttackArea(
+                FacingDirection(npc.TilePoint, target.TilePoint),
+                AttackImpactFrame)
+            .Intersects(target.GetBoundingBox());
+
+    private Rectangle GetAttackArea(int facingDirection, int frame)
+    {
+        if (weaponPreview is null)
+        {
+            Rectangle fallback = npc.GetBoundingBox();
+            fallback.Inflate(Game1.tileSize / 2, Game1.tileSize / 2);
+            return fallback;
+        }
+
+        Vector2 toolLocation = npc.GetBoundingBox().Center.ToVector2()
+                               + FacingVector(facingDirection) * Game1.tileSize;
+        Vector2 tileLocation1 = Vector2.Zero;
+        Vector2 tileLocation2 = Vector2.Zero;
+        return weaponPreview.getAreaOfEffect(
+            (int)toolLocation.X,
+            (int)toolLocation.Y,
+            facingDirection,
+            ref tileLocation1,
+            ref tileLocation2,
+            npc.GetBoundingBox(),
+            Math.Clamp(frame, 0, AttackFrameCount - 1));
+    }
+
+    private static bool IsValidCombatTarget(Monster monster, GameLocation location)
+        => monster.Health > 0
+           && !monster.IsInvisible
+           && ReferenceEquals(monster.currentLocation, location);
+
     private bool UpdateIncomingDamage(GameLocation location)
     {
         if (incomingDamageCooldownTicks > 0)
@@ -636,15 +807,14 @@ internal sealed class NpcMineGuardSession
     }
 
     private int GetAttackCooldownTicks()
-        => Math.Clamp(18 - weapon.Speed, 6, 18);
+        => Math.Clamp(8 - weapon.Speed, 3, 8);
 
     private void Finish(string reason)
     {
         if (complete)
             return;
         StopNavigation();
-        StopCombatNavigation();
-        StopAttackAnimation();
+        ClearCombatTarget(reason);
         if (!combatState.IsHospitalized(npc.Name))
         {
             if (reason.Equals("ended_player_left_mine", StringComparison.Ordinal))
@@ -676,6 +846,9 @@ internal sealed class NpcMineGuardSession
 
     private static double TileDistance(Point first, Point second)
         => Math.Max(Math.Abs(first.X - second.X), Math.Abs(first.Y - second.Y));
+
+    private static int ManhattanDistance(Point first, Point second)
+        => Math.Abs(first.X - second.X) + Math.Abs(first.Y - second.Y);
 
     private static int FacingDirection(Point standing, Point target)
     {

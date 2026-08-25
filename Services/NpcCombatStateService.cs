@@ -10,7 +10,7 @@ public sealed class NpcCombatStateService
 {
     public const string HospitalLocationName = "Harvey's Clinic";
     public const string DefaultWeaponQualifiedItemId = "(W)4";
-    public const int DefaultMaxHealth = 300;
+    public const int DefaultMaxHealth = 1200;
     public const int FriendshipLossOnDefeat = 125;
 
     private readonly IMonitor monitor;
@@ -131,7 +131,7 @@ public sealed class NpcCombatStateService
     public NpcCombatState GetOrCreate(string npcName)
     {
         NpcCombatState state = store.GetOrCreate(npcName);
-        if (state.MaxHealth < DefaultMaxHealth)
+        if (state.MaxHealth != DefaultMaxHealth)
         {
             int oldMaxHealth = Math.Max(1, state.MaxHealth);
             int oldCurrentHealth = state.CurrentHealth;

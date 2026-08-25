@@ -30,6 +30,7 @@ public sealed class NpcContextSnapshot
     public IReadOnlyList<LangGraphMoveDestination> AllowedMoveDestinations { get; set; }
         = Array.Empty<LangGraphMoveDestination>();
     public bool MineGuardAvailable { get; set; }
+    public bool FishingCompanionAvailable { get; set; }
     public string PlayerInput { get; set; } = string.Empty;
     public string PlayerId { get; set; } = string.Empty;
     public int Day { get; set; }
@@ -70,7 +71,7 @@ public sealed class LangGraphLlmProfile
     public string ApiKey { get; set; } = string.Empty;
     public bool EnableThinking { get; set; }
     public string ReasoningEffort { get; set; } = "low";
-    public int MaxOutputTokens { get; set; } = 4096;
+    public int MaxOutputTokens { get; set; } = 2048;
 }
 
 public sealed class LangGraphRequest

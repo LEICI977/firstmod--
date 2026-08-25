@@ -126,9 +126,9 @@ SMAPI 首次运行后会在模组目录生成 `config.json`。
 | `MaxTalkDistanceTiles` | `3.5` | 开始普通对话的最大选择距离 |
 | `EnableThinking` | `false` | 是否启用模型思考模式 |
 | `ReasoningEffort` | `low` | 提供商支持时发送的推理强度 |
-| `MaxContextMessages` | `32` | 每次请求携带的近期消息上限 |
-| `SummaryTriggerMessages` | `32` | 触发长期摘要的消息数量 |
-| `SummaryKeepRecentMessages` | `12` | 摘要后保留的近期消息数量 |
+| `MaxContextMessages` | `24` | 每次请求携带的近期消息上限 |
+| `SummaryTriggerMessages` | `24` | 触发长期摘要的消息数量 |
+| `SummaryKeepRecentMessages` | `8` | 摘要后保留的近期消息数量 |
 | `EnableSocialDirector` | `true` | 是否启用每日主动社交 |
 | `DailyCandidateMin` / `DailyCandidateMax` | `3` / `5` | 每日社交候选数量 |
 | `SocialActivationDistanceTiles` | `7` | 主动相遇触发距离 |

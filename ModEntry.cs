@@ -39,6 +39,7 @@ public sealed partial class ModEntry : Mod
     private NpcCombatStateService npcCombatStateService = null!;
     private NpcMoveToolService npcMoveToolService = null!;
     private NpcMineGuardService npcMineGuardService = null!;
+    private NpcFishingService npcFishingService = null!;
     private ProactiveSceneService proactiveSceneService = null!;
     private readonly PilotNarrativePlanner pilotNarrativePlanner = new();
     private readonly NarrativeChoiceResolver narrativeChoiceResolver = new();
@@ -63,6 +64,10 @@ public sealed partial class ModEntry : Mod
             npcCombatStateService,
             conversationSessionMemory);
         npcMineGuardService = new NpcMineGuardService(Monitor, npcCombatStateService);
+        npcFishingService = new NpcFishingService(
+            Monitor,
+            npcCombatStateService,
+            conversationSessionMemory);
         config = helper.ReadConfig<ModConfig>();
         NormalizeConfig();
         bool migratedAiSettings = NormalizeAiSettings();
@@ -206,6 +211,7 @@ public sealed partial class ModEntry : Mod
         conversationSessionMemory.Clear();
         npcMoveToolService.CancelAll("save_loaded");
         npcMineGuardService.CancelAll("save_loaded");
+        npcFishingService.CancelAll("save_loaded");
         ConversationScreenState state = screenStates.Value;
         CancelPendingConversation(state);
         CancelPendingSocialScene(state, retryToday: false);
@@ -326,6 +332,7 @@ public sealed partial class ModEntry : Mod
         conversationSessionMemory.Clear();
         npcMoveToolService.CancelAll("day_ending");
         npcMineGuardService.CancelAll("day_ending");
+        npcFishingService.CancelAll("day_ending");
         CompleteActiveVanillaEvent("day_ending");
         overnightMailDeliveryReadyDay = -1;
         foreach (ConversationScreenState state in screenStates.GetActiveValues().Select(pair => pair.Value))
@@ -369,6 +376,7 @@ public sealed partial class ModEntry : Mod
         conversationSessionMemory.Clear();
         npcMoveToolService.CancelAll("returned_to_title");
         npcMineGuardService.CancelAll("returned_to_title");
+        npcFishingService.CancelAll("returned_to_title");
         foreach (ConversationScreenState state in screenStates.GetActiveValues().Select(pair => pair.Value))
         {
             CancelPendingConversation(state);
@@ -397,6 +405,7 @@ public sealed partial class ModEntry : Mod
 
         npcMoveToolService.Update();
         npcMineGuardService.Update();
+        npcFishingService.Update();
         if (npcCombatStateService.InitializeDefaultWeaponsForWorld())
             PersistNpcCombatState();
         npcCombatStateService.Update();
@@ -494,6 +503,7 @@ public sealed partial class ModEntry : Mod
             return;
 
         npcMineGuardService.DrawWorld(e.SpriteBatch);
+        npcFishingService.DrawWorld(e.SpriteBatch);
     }
 
     private void OnButtonPressed(object? sender, ButtonPressedEventArgs e)
@@ -675,6 +685,15 @@ public sealed partial class ModEntry : Mod
         Monitor.Log(
             $"下矿护卫候选 {npcName}：可用={mineGuardAvailable}，阻止原因={mineGuardBlockReason ?? "无"}。",
             LogLevel.Debug);
+        string? fishingBlockReason = npcFishingService.GetAvailabilityReason(
+            npc,
+            Game1.currentLocation,
+            npcMoveToolService.HasActiveSession(npc.Name)
+            || npcMineGuardService.HasActiveSession(npc.Name));
+        bool fishingCompanionAvailable = fishingBlockReason is null;
+        Monitor.Log(
+            $"钓鱼同行候选 {npcName}：可用={fishingCompanionAvailable}，阻止原因={fishingBlockReason ?? "无"}。",
+            LogLevel.Debug);
         var moveCandidateTimer = System.Diagnostics.Stopwatch.StartNew();
         moveDestinations = npcMoveToolService.BuildDestinations(npc, Game1.currentLocation);
         moveCandidateTimer.Stop();
@@ -780,6 +799,7 @@ public sealed partial class ModEntry : Mod
                 DisplayName = destination.DisplayName,
             }).ToArray(),
             MineGuardAvailable = mineGuardAvailable,
+            FishingCompanionAvailable = fishingCompanionAvailable,
             PlayerInput = userText,
             PlayerId = playerId,
             Day = Game1.Date.TotalDays,
@@ -873,6 +893,7 @@ public sealed partial class ModEntry : Mod
                 state.GiftExecution = null;
                 state.MoveExecution = null;
                 state.MineGuardExecution = null;
+                state.FishingExecution = null;
                 ReleaseConversationCancellation(state);
                 return;
             }
@@ -898,7 +919,9 @@ public sealed partial class ModEntry : Mod
 
                 string confirmationText = confirmation.Kind.Equals("mine_guard_confirmation", StringComparison.Ordinal)
                     ? $"邀请 {info.NpcDisplayName} 一起下矿担任护卫？"
-                    : $"要和 {info.NpcDisplayName} 一起去{confirmation.DisplayName}吗？";
+                    : confirmation.Kind.Equals("fishing_confirmation", StringComparison.Ordinal)
+                        ? $"邀请 {info.NpcDisplayName} 和你一起钓鱼？"
+                        : $"要和 {info.NpcDisplayName} 一起去{confirmation.DisplayName}吗？";
                 state.StreamingMenu.SetActionConfirmation(
                     confirmationText,
                     onApprove: () => ResumePendingMoveConfirmation(state, approved: true),
@@ -906,6 +929,8 @@ public sealed partial class ModEntry : Mod
                 Monitor.Log(
                     confirmation.Kind.Equals("mine_guard_confirmation", StringComparison.Ordinal)
                         ? $"等待玩家确认是否邀请 {info.NpcName} 一起下矿担任护卫。"
+                        : confirmation.Kind.Equals("fishing_confirmation", StringComparison.Ordinal)
+                            ? $"等待玩家确认是否邀请 {info.NpcName} 一起钓鱼。"
                         : $"等待玩家确认是否与 {info.NpcName} 同行前往 {destination.Key}（{destination.DisplayName}）。",
                     LogLevel.Info);
                 return;
@@ -922,6 +947,7 @@ public sealed partial class ModEntry : Mod
                 state.GiftExecution,
                 state.MoveExecution,
                 state.MineGuardExecution,
+                state.FishingExecution,
                 info,
                 state.PendingMoveConfirmation);
             state.GiftExecution = execution;
@@ -929,6 +955,8 @@ public sealed partial class ModEntry : Mod
                 ?? ConversationMoveExecutionResult.NoAction();
             ConversationMineGuardExecutionResult mineGuardExecution = state.MineGuardExecution
                 ?? ConversationMineGuardExecutionResult.NoAction();
+            ConversationFishingExecutionResult fishingExecution = state.FishingExecution
+                ?? ConversationFishingExecutionResult.NoAction();
             if (moveExecution.IsCommitted)
                 npcMoveToolService.SetTravelBarks(info.NpcName, decision.TravelBarks);
 
@@ -946,6 +974,7 @@ public sealed partial class ModEntry : Mod
                 execution,
                 moveExecution,
                 mineGuardExecution,
+                fishingExecution,
                 decision.MemoryUpdate);
             GetPlayerMemories(info.PlayerId)[info.NpcName] = updatedMemory;
             memoryDirty = true;
@@ -970,8 +999,10 @@ public sealed partial class ModEntry : Mod
             state.GiftExecution = null;
             state.MoveExecution = null;
             state.MineGuardExecution = null;
+            state.FishingExecution = null;
+            state.FishingExecution = null;
             Monitor.Log(
-                $"{info.NpcName} 的 LangGraph 对话完成；礼物结果={execution.Outcome}，移动结果={moveExecution.Outcome}，字符数={reply.Length}。",
+                $"{info.NpcName} 的 LangGraph 对话完成；礼物结果={execution.Outcome}，移动结果={moveExecution.Outcome}，钓鱼结果={fishingExecution.Outcome}，字符数={reply.Length}。",
                 LogLevel.Info);
             ReleaseConversationCancellation(state);
         }
@@ -987,7 +1018,8 @@ public sealed partial class ModEntry : Mod
                 state.GiftExecution ?? ConversationGiftExecutionResult.NoAction(),
                 Unwrap(ex),
                 state.MoveExecution,
-                state.MineGuardExecution);
+                state.MineGuardExecution,
+                state.FishingExecution);
         }
     }
 
@@ -1002,7 +1034,8 @@ public sealed partial class ModEntry : Mod
         if (!response.ContextVersion.Equals(info.GraphSnapshot.ContextVersion, StringComparison.Ordinal))
             throw new LangGraphValidationException("Move confirmation context version is stale.");
         if (!confirmation.Kind.Equals("move_confirmation", StringComparison.Ordinal)
-            && !confirmation.Kind.Equals("mine_guard_confirmation", StringComparison.Ordinal))
+            && !confirmation.Kind.Equals("mine_guard_confirmation", StringComparison.Ordinal)
+            && !confirmation.Kind.Equals("fishing_confirmation", StringComparison.Ordinal))
             throw new LangGraphValidationException("Graph returned an unknown confirmation kind.");
         if (string.IsNullOrWhiteSpace(confirmation.ResumeToken)
             || string.IsNullOrWhiteSpace(confirmation.ToolCallId))
@@ -1013,6 +1046,12 @@ public sealed partial class ModEntry : Mod
         {
             if (!info.GraphSnapshot.MineGuardAvailable || !string.IsNullOrWhiteSpace(confirmation.DestinationKey))
                 throw new LangGraphValidationException("Mine guard confirmation is unavailable or malformed.");
+            return confirmation;
+        }
+        if (confirmation.Kind.Equals("fishing_confirmation", StringComparison.Ordinal))
+        {
+            if (!info.GraphSnapshot.FishingCompanionAvailable || !string.IsNullOrWhiteSpace(confirmation.DestinationKey))
+                throw new LangGraphValidationException("Fishing companion confirmation is unavailable or malformed.");
             return confirmation;
         }
         if (!(info.MoveDestinations ?? Array.Empty<ConversationMoveDestination>()).Any(destination =>
@@ -1068,6 +1107,25 @@ public sealed partial class ModEntry : Mod
                 state.SessionCancellation.Token);
             return;
         }
+        if (confirmation.Kind.Equals("fishing_confirmation", StringComparison.Ordinal))
+        {
+            state.MoveConfirmationApproved = approved;
+            if (!approved)
+            {
+                state.FishingExecution = new ConversationFishingExecutionResult
+                {
+                    RequestedToolName = NpcFishingToolNames.InviteFishingCompanion,
+                    Outcome = ConversationFishingOutcome.Rejected,
+                    FailureReason = "player_declined",
+                };
+            }
+            state.PendingGraphDecision = conversationOrchestrator.ResumeMoveAsync(
+                info.GraphRequestId,
+                confirmation.ResumeToken,
+                approved,
+                state.SessionCancellation.Token);
+            return;
+        }
         if (destination is null)
         {
             HandleConversationFailure(
@@ -1107,6 +1165,7 @@ public sealed partial class ModEntry : Mod
         ConversationGiftExecutionResult? execution,
         ConversationMoveExecutionResult? moveExecution,
         ConversationMineGuardExecutionResult? mineGuardExecution,
+        ConversationFishingExecutionResult? fishingExecution,
         PendingConversationInfo info,
         LangGraphMoveConfirmation? moveConfirmation)
     {
@@ -1199,6 +1258,27 @@ public sealed partial class ModEntry : Mod
                 throw new LangGraphValidationException("Graph mine guard result did not preserve the guarding state.");
             return resolved;
         }
+        if (decision.Action.Name.Equals(NpcFishingToolNames.InviteFishingCompanion, StringComparison.Ordinal))
+        {
+            if (moveConfirmation is null
+                || !moveConfirmation.Kind.Equals("fishing_confirmation", StringComparison.Ordinal)
+                || !toolExecution.ToolCallId.Equals(moveConfirmation.ToolCallId, StringComparison.Ordinal))
+            {
+                throw new LangGraphValidationException("invite_fishing_companion completed without the exact player confirmation.");
+            }
+            ConversationFishingExecutionResult fishing = fishingExecution
+                ?? ConversationFishingExecutionResult.NoAction();
+            if (!fishing.RequestedToolName.Equals(NpcFishingToolNames.InviteFishingCompanion, StringComparison.Ordinal))
+                throw new LangGraphValidationException("Game bridge did not record invite_fishing_companion execution.");
+            if (toolExecution.Ok != fishing.IsCommitted)
+                throw new LangGraphValidationException("Graph fishing result differs from the authoritative game result.");
+            if (fishing.IsCommitted
+                && !toolExecution.Status.Equals("following", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new LangGraphValidationException("Graph fishing result did not preserve the following state.");
+            }
+            return resolved;
+        }
         if (!string.Equals(
                 toolExecution.CandidateKey,
                 decision.Action.CandidateKey,
@@ -1224,6 +1304,7 @@ public sealed partial class ModEntry : Mod
         ConversationGiftExecutionResult execution,
         ConversationMoveExecutionResult moveExecution,
         ConversationMineGuardExecutionResult mineGuardExecution,
+        ConversationFishingExecutionResult fishingExecution,
         LangGraphMemoryUpdate update)
     {
         NpcConversationMemory memory = info.MemorySnapshot.Clone();
@@ -1257,6 +1338,7 @@ public sealed partial class ModEntry : Mod
         AppendConversationGiftMemory(memory, execution, info.GameDate);
         AppendConversationMoveMemory(memory, moveExecution, info.GameDate);
         AppendConversationMineGuardMemory(memory, mineGuardExecution, info.GameDate);
+        AppendConversationFishingMemory(memory, fishingExecution, info.GameDate);
         memory.Messages = ConversationMemoryPolicy.KeepRecentConversationTurns(memory.Messages);
         return memory;
     }
@@ -1394,12 +1476,15 @@ public sealed partial class ModEntry : Mod
         ConversationGiftExecutionResult execution,
         Exception actual,
         ConversationMoveExecutionResult? moveExecution = null,
-        ConversationMineGuardExecutionResult? mineGuardExecution = null)
+        ConversationMineGuardExecutionResult? mineGuardExecution = null,
+        ConversationFishingExecutionResult? fishingExecution = null)
     {
         ConversationMoveExecutionResult movement = moveExecution
             ?? ConversationMoveExecutionResult.NoAction();
         ConversationMineGuardExecutionResult guard = mineGuardExecution
             ?? ConversationMineGuardExecutionResult.NoAction();
+        ConversationFishingExecutionResult fishing = fishingExecution
+            ?? ConversationFishingExecutionResult.NoAction();
         state.PendingGiftPlan = null;
         state.PendingGraphDecision = null;
         state.PendingConversation = null;
@@ -1409,6 +1494,8 @@ public sealed partial class ModEntry : Mod
         state.GiftExecution = null;
         state.MoveExecution = null;
         state.MineGuardExecution = null;
+        state.FishingExecution = null;
+        state.FishingExecution = null;
         Monitor.Log($"AI 对话失败：{actual}", LogLevel.Error);
         if (actual is DeepSeekApiException apiException
             && apiException.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
@@ -1417,13 +1504,15 @@ public sealed partial class ModEntry : Mod
             state.RequestApiKeyPrompt = true;
         }
 
-        if (execution.IsCommitted || movement.IsCommitted || guard.IsCommitted)
+        if (execution.IsCommitted || movement.IsCommitted || guard.IsCommitted || fishing.IsCommitted)
         {
             string reply = LimitReply(execution.IsCommitted
                 ? NpcGiftToolService.CreateFallbackReply(execution, info.NpcDisplayName)
                 : movement.IsCommitted
                     ? CreateMoveFallbackReply(movement)
-                    : CreateMineGuardFallbackReply(info.NpcDisplayName));
+                    : guard.IsCommitted
+                        ? CreateMineGuardFallbackReply(info.NpcDisplayName)
+                        : CreateFishingFallbackReply(info.NpcDisplayName));
             NpcConversationMemory memory = info.MemorySnapshot.Clone();
             memory.Messages ??= new List<ConversationMemoryMessage>();
             DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -1448,6 +1537,7 @@ public sealed partial class ModEntry : Mod
             AppendConversationGiftMemory(memory, execution, info.GameDate);
             AppendConversationMoveMemory(memory, movement, info.GameDate);
             AppendConversationMineGuardMemory(memory, guard, info.GameDate);
+            AppendConversationFishingMemory(memory, fishing, info.GameDate);
             memory.Summary = ConversationMemoryPolicy.UpdateLongTermMemory(
                 memory.Summary,
                 summaryPatch: null,
@@ -1554,6 +1644,27 @@ public sealed partial class ModEntry : Mod
             Source = ConversationMemorySources.ModAction,
         });
     }
+
+    private static void AppendConversationFishingMemory(
+        NpcConversationMemory memory,
+        ConversationFishingExecutionResult execution,
+        string gameDate)
+    {
+        if (!execution.IsCommitted)
+            return;
+        memory.Messages ??= new List<ConversationMemoryMessage>();
+        memory.Messages.Add(new ConversationMemoryMessage
+        {
+            Role = "system",
+            Content = "钓鱼同行已执行：NPC 接受邀请，开始和玩家一起钓鱼，使用铱金鱼竿并把鱼交给玩家。",
+            GameDate = gameDate,
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            Source = ConversationMemorySources.ModAction,
+        });
+    }
+
+    private static string CreateFishingFallbackReply(string npcDisplayName)
+        => $"好啊，我会跟着你一起钓鱼。你抛竿后我也准备好。";
 
     private static string CreateMineGuardFallbackReply(string npcDisplayName)
         => $"{npcDisplayName} 答应了，会在你下矿时跟着你并负责警戒。";
@@ -3067,16 +3178,16 @@ public sealed partial class ModEntry : Mod
         {
             config.LangGraphBaseUrl = "http://127.0.0.1:8123";
         }
-        config.MaxContextMessages = Math.Clamp(config.MaxContextMessages, 4, 100);
-        config.SummaryTriggerMessages = Math.Clamp(config.SummaryTriggerMessages, 4, 200);
+        config.MaxContextMessages = Math.Clamp(config.MaxContextMessages, 4, 24);
+        config.SummaryTriggerMessages = Math.Clamp(config.SummaryTriggerMessages, 4, 24);
         config.SummaryKeepRecentMessages = Math.Clamp(config.SummaryKeepRecentMessages, 0, config.SummaryTriggerMessages - 1);
-        config.MaxSeenEventIdsInContext = Math.Clamp(config.MaxSeenEventIdsInContext, 0, 200);
-        config.MaxQuestsInContext = Math.Clamp(config.MaxQuestsInContext, 0, 30);
-        config.MaxCompleteNarrativeEpisodesInContext = Math.Clamp(config.MaxCompleteNarrativeEpisodesInContext, 1, 20);
-        config.MaxNarrativeEpisodeAnchorsInContext = Math.Clamp(config.MaxNarrativeEpisodeAnchorsInContext, 0, 100);
-        config.MaxNarrativeContextCharacters = Math.Clamp(config.MaxNarrativeContextCharacters, 2000, 50000);
+        config.MaxSeenEventIdsInContext = Math.Clamp(config.MaxSeenEventIdsInContext, 0, 12);
+        config.MaxQuestsInContext = Math.Clamp(config.MaxQuestsInContext, 0, 4);
+        config.MaxCompleteNarrativeEpisodesInContext = Math.Clamp(config.MaxCompleteNarrativeEpisodesInContext, 1, 2);
+        config.MaxNarrativeEpisodeAnchorsInContext = Math.Clamp(config.MaxNarrativeEpisodeAnchorsInContext, 0, 8);
+        config.MaxNarrativeContextCharacters = Math.Clamp(config.MaxNarrativeContextCharacters, 2000, 6000);
         config.MaxReplyCharacters = Math.Clamp(config.MaxReplyCharacters, 100, 6000);
-        config.MaxOutputTokens = Math.Clamp(config.MaxOutputTokens, 128, 32768);
+        config.MaxOutputTokens = Math.Clamp(config.MaxOutputTokens, 128, 2048);
         config.DailyCandidateMin = Math.Clamp(config.DailyCandidateMin, 1, 5);
         config.DailyCandidateMax = Math.Clamp(config.DailyCandidateMax, config.DailyCandidateMin, 5);
         config.DailyEncounterLimit = Math.Clamp(config.DailyEncounterLimit, 1, 10);
@@ -3334,7 +3445,8 @@ public sealed partial class ModEntry : Mod
                 NpcGiftToolNames.GiveGift
                 or NpcGiftToolNames.MailGift
                 or NpcMoveToolNames.MoveTo
-                or NpcMineGuardToolNames.InviteMineGuard))
+                or NpcMineGuardToolNames.InviteMineGuard
+                or NpcFishingToolNames.InviteFishingCompanion))
             return RejectGameBridgeTool(request, "unknown_tool", "The requested game tool is not registered.");
 
         if (toolName == NpcMoveToolNames.MoveTo)
@@ -3452,6 +3564,65 @@ public sealed partial class ModEntry : Mod
                 request.ContextVersion ?? string.Empty,
                 guardResult);
             return guardResult;
+        }
+
+        if (toolName == NpcFishingToolNames.InviteFishingCompanion)
+        {
+            if (!string.IsNullOrWhiteSpace(request.CandidateKey)
+                || !string.IsNullOrWhiteSpace(request.DestinationKey))
+            {
+                return RejectGameBridgeTool(request, "invalid_arguments", "invite_fishing_companion accepts no arguments.");
+            }
+            LangGraphMoveConfirmation? confirmation = targetState.PendingMoveConfirmation;
+            if (confirmation is null
+                || !targetState.MoveConfirmationApproved
+                || !confirmation.Kind.Equals("fishing_confirmation", StringComparison.Ordinal)
+                || !confirmation.ToolCallId.Equals(request.ToolCallId, StringComparison.Ordinal))
+            {
+                return RejectGameBridgeTool(
+                    request,
+                    "fishing_not_confirmed",
+                    "玩家没有确认这次钓鱼同行邀请。");
+            }
+
+            NPC? npc = Game1.getCharacterFromName(
+                info.NpcName,
+                mustBeVillager: false,
+                includeEventActors: false);
+            ConversationFishingExecutionResult fishing = npc is null
+                ? new ConversationFishingExecutionResult
+                {
+                    RequestedToolName = NpcFishingToolNames.InviteFishingCompanion,
+                    Outcome = ConversationFishingOutcome.Rejected,
+                    FailureReason = "npc_unavailable",
+                }
+                : npcFishingService.Execute(
+                    npc,
+                    Game1.player,
+                    npcMoveToolService.HasActiveSession(npc.Name)
+                    || npcMineGuardService.HasActiveSession(npc.Name));
+            targetState.FishingExecution = fishing;
+            var fishingResult = new GameBridgeToolResult
+            {
+                RequestId = request.RequestId,
+                ToolCallId = request.ToolCallId,
+                ContextVersion = request.ContextVersion,
+                Tool = toolName,
+                Status = fishing.IsCommitted ? "following" : fishing.Outcome == ConversationFishingOutcome.Failed ? "failed" : "rejected",
+                Ok = fishing.IsCommitted,
+                ReasonCode = fishing.IsCommitted ? null : NormalizeOptionalBridgeValue(fishing.FailureReason),
+                Message = fishing.IsCommitted
+                    ? "NPC 已接受钓鱼同行，会靠近玩家等待玩家抛竿，并把钓到的鱼交给玩家。"
+                    : $"钓鱼同行没有开始：{fishing.FailureReason}",
+                ReceiptId = receiptKey,
+            };
+            gameBridgeReceipts[receiptKey] = new GameBridgeReceipt(
+                toolName,
+                string.Empty,
+                string.Empty,
+                request.ContextVersion ?? string.Empty,
+                fishingResult);
+            return fishingResult;
         }
 
         if (string.IsNullOrWhiteSpace(request.CandidateKey)
@@ -3680,6 +3851,8 @@ public sealed partial class ModEntry : Mod
         public ConversationMoveExecutionResult? MoveExecution { get; set; }
 
         public ConversationMineGuardExecutionResult? MineGuardExecution { get; set; }
+
+        public ConversationFishingExecutionResult? FishingExecution { get; set; }
 
         public bool HasPendingConversation
             => PendingGiftPlan is not null

@@ -70,8 +70,12 @@ def fake_provider(request, messages, tools, json_mode=False, tool_choice=None):
     if tool_choice is not None and personality_instruction:
         assert any(
             message.type == "system"
-            and "【最终回复原版人格要求】" in str(message.content)
             and personality_instruction in str(message.content)
+            for message in messages
+        )
+        assert not any(
+            message.type == "system"
+            and "【最终回复原版人格要求】" in str(message.content)
             for message in messages
         )
     tool_names = [item.get("function", {}).get("name") for item in tools]
@@ -137,6 +141,20 @@ def fake_provider(request, messages, tools, json_mode=False, tool_choice=None):
                 }
             ],
         }
+    if request_id in {"smoke-fishing", "smoke-fishing-decline"} and request_call == 1 and "invite_fishing_companion" in tool_names:
+        return {
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-smoke-fishing",
+                    "type": "function",
+                    "function": {
+                        "name": "invite_fishing_companion",
+                        "arguments": "{}",
+                    },
+                }
+            ],
+        }
     assert "submit_final_response" in tool_names
     barks = ["The sea air should be nice.", "Keep going, I'm right behind you."] \
         if request_id == "smoke-move" else []
@@ -150,7 +168,7 @@ def fake_bridge(_, payload):
         "requestId": payload["requestId"],
         "toolCallId": payload["toolCallId"],
         "tool": payload["tool"],
-        "status": "following" if payload["tool"] == "move_to" else "guarding" if payload["tool"] == "invite_mine_guard" else "completed",
+        "status": "following" if payload["tool"] in {"move_to", "invite_fishing_companion"} else "guarding" if payload["tool"] == "invite_mine_guard" else "completed",
         "ok": True,
         "displayName": "Beach" if payload["tool"] == "move_to" else "Quartz",
         "quantity": 0 if payload["tool"] == "move_to" else 1,
@@ -435,6 +453,42 @@ try:
     assert mine_declined_result["tool_execution"]["reason_code"] == "player_declined"
     assert provider_calls == calls_before + 2, provider_calls
     assert bridge_calls == bridge_before, bridge_calls
+
+    fishing_payload = json.loads(json.dumps(payload))
+    fishing_payload["requestId"] = "smoke-fishing"
+    fishing_payload["contextVersion"] = "ctx-fishing"
+    fishing_payload["contextSnapshot"]["allowedTools"] = []
+    fishing_payload["contextSnapshot"]["allowedMoveDestinations"] = []
+    fishing_payload["contextSnapshot"]["fishingCompanionAvailable"] = True
+    calls_before = provider_calls
+    bridge_before = bridge_calls
+    fishing_request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/v1/graph/decision",
+        data=json.dumps(fishing_payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(fishing_request) as response:
+        fishing_confirmation = json.loads(response.read().decode("utf-8"))
+    assert fishing_confirmation["confirmation"]["kind"] == "fishing_confirmation"
+    assert fishing_confirmation["confirmation"]["destination_key"] == ""
+    fishing_confirm_request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/v1/graph/confirm",
+        data=json.dumps({
+            "requestId": "smoke-fishing",
+            "resumeToken": fishing_confirmation["confirmation"]["resume_token"],
+            "approved": True,
+        }).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(fishing_confirm_request) as response:
+        fishing_result = json.loads(response.read().decode("utf-8"))
+    assert fishing_result["decision"]["action"]["name"] == "invite_fishing_companion"
+    assert fishing_result["tool_execution"]["status"] == "following"
+    assert fishing_result["tool_execution"]["ok"] is True
+    assert provider_calls == calls_before + 2, provider_calls
+    assert bridge_calls == bridge_before + 1, bridge_calls
     print("LangGraph ToolNode smoke test passed.")
 finally:
     server.shutdown()

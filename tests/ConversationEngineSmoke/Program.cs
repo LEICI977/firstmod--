@@ -131,9 +131,10 @@ static void TestConversationMemoryPolicy()
 
     List<ConversationMemoryMessage> recent = ConversationMemoryPolicy.KeepRecentConversationTurns(messages);
     Assert(
-        recent.Count(message => message.Source == ConversationMemorySources.AiChat && message.Role == "user") == 16,
-        "Recent memory did not retain exactly 16 complete AI turns.");
-    Assert(recent[0].Content == "user-4" && recent[^1].Content == "tool-19",
+        recent.Count(message => message.Source == ConversationMemorySources.AiChat && message.Role == "user")
+            == ConversationMemoryPolicy.RecentConversationTurns,
+        "Recent memory did not retain the configured number of complete AI turns.");
+    Assert(recent[0].Content == "user-10" && recent[^1].Content == "tool-19",
         "Recent memory split a turn or discarded its authoritative tool result.");
 }
 

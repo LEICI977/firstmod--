@@ -3,11 +3,11 @@ namespace VivantValley.Services;
 /// <summary>Bounds recent dialogue and provides human-like, partial recall of older memories.</summary>
 public static class ConversationMemoryPolicy
 {
-    public const int RecentConversationTurns = 16;
+    public const int RecentConversationTurns = 10;
     public const int MaximumLongTermCharacters = 2000;
     public const int MaximumMemoryEntryCharacters = 320;
-    public const int MaximumRecallCharacters = 900;
-    public const int MaximumRecallEntries = 4;
+    public const int MaximumRecallCharacters = 600;
+    public const int MaximumRecallEntries = 3;
 
     public static string UpdateLongTermMemory(
         string? existingSummary,
@@ -116,7 +116,7 @@ public static class ConversationMemoryPolicy
             }
         }
 
-        // Non-chat event records are bounded too, so a save cannot grow forever before 16 AI turns exist.
+        // Non-chat event records are bounded too, so a save cannot grow forever before 10 AI turns exist.
         int hardStart = Math.Max(0, source.Count - (maximumTurns * 4));
         start = foundLimit ? Math.Max(start, hardStart) : hardStart;
         return source.Skip(start).ToList();

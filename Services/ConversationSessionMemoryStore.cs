@@ -11,6 +11,7 @@ public sealed class ConversationSessionMemoryStore
 
     private const string TravelingStatus = "traveling";
     private const string ArrivedStatus = "arrived";
+    private const string FishingStatus = "fishing";
 
     private readonly Dictionary<string, SessionBucket> buckets =
         new(StringComparer.Ordinal);
@@ -96,6 +97,35 @@ public sealed class ConversationSessionMemoryStore
             buckets.Remove(MakeKey(playerId, npcName));
     }
 
+    public void RecordFishingCatch(
+        string playerId,
+        string npcName,
+        string gameDate,
+        string locationName,
+        string fishDisplayName)
+    {
+        if (string.IsNullOrWhiteSpace(playerId)
+            || string.IsNullOrWhiteSpace(npcName)
+            || string.IsNullOrWhiteSpace(fishDisplayName))
+        {
+            return;
+        }
+
+        SessionBucket bucket = GetOrCreateBucket(playerId, npcName);
+        bucket.Facts.RemoveAll(fact => fact.Status.Equals(FishingStatus, StringComparison.Ordinal));
+        bucket.Facts.Add(new SessionFact
+        {
+            DestinationKey = "fishing:" + Clean(locationName, 120),
+            DestinationDisplayName = Clean(fishDisplayName, 120),
+            SourceLocationName = Clean(locationName, 120),
+            GameDate = Clean(gameDate, 80),
+            Status = FishingStatus,
+            UpdatedAtUtc = DateTimeOffset.UtcNow,
+            ArrivalObservedTurn = null,
+        });
+        Trim(bucket);
+    }
+
     public IReadOnlyList<string> BuildPromptFacts(
         string playerId,
         string npcName,
@@ -106,14 +136,14 @@ public sealed class ConversationSessionMemoryStore
 
         long boundedTurn = Math.Max(0, currentConversationTurn);
         foreach (SessionFact fact in bucket.Facts.Where(fact =>
-                     fact.Status.Equals(ArrivedStatus, StringComparison.Ordinal)
+                     !fact.Status.Equals(TravelingStatus, StringComparison.Ordinal)
                      && !fact.ArrivalObservedTurn.HasValue).ToArray())
         {
             fact.ArrivalObservedTurn = boundedTurn;
         }
 
         bucket.Facts.RemoveAll(fact =>
-            fact.Status.Equals(ArrivedStatus, StringComparison.Ordinal)
+            !fact.Status.Equals(TravelingStatus, StringComparison.Ordinal)
             && fact.ArrivalObservedTurn.HasValue
             && boundedTurn >= fact.ArrivalObservedTurn.Value + MaximumRetainedConversationTurns);
         if (bucket.Facts.Count == 0)
@@ -174,6 +204,14 @@ public sealed class ConversationSessionMemoryStore
     private static string FormatFact(SessionFact fact)
     {
         string date = string.IsNullOrWhiteSpace(fact.GameDate) ? "日期不详" : fact.GameDate;
+        if (fact.Status.Equals(FishingStatus, StringComparison.Ordinal))
+        {
+            string place = string.IsNullOrWhiteSpace(fact.SourceLocationName)
+                ? "当前地点"
+                : fact.SourceLocationName;
+            return $"[{date}] 临时共同经历：NPC 和玩家在 {place} 一起钓鱼，并钓到了 {fact.DestinationDisplayName} 交给玩家。";
+        }
+
         string source = string.IsNullOrWhiteSpace(fact.SourceLocationName)
             ? string.Empty
             : $"（从 {fact.SourceLocationName} 出发）";

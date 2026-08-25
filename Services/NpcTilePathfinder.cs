@@ -53,6 +53,54 @@ internal sealed class NpcTilePathfinder
         return found is not null;
     }
 
+    public bool TryFindPathToAdjacent(
+        GameLocation location,
+        NPC npc,
+        Point start,
+        Point target,
+        Point leashCenter,
+        int maximumLeashDistance,
+        out IReadOnlyList<Point> path,
+        out Point standingTile)
+    {
+        maximumLeashDistance = Math.Max(1, maximumLeashDistance);
+        Func<Point, bool> staysInsideLeash = tile => Manhattan(tile, leashCenter) <= maximumLeashDistance;
+        var candidates = new List<(Point StandingTile, List<Point> Path)>();
+        foreach (Point direction in Directions)
+        {
+            Point candidate = target + direction;
+            if (!staysInsideLeash(candidate))
+                continue;
+
+            List<Point>? found = FindPath(
+                location,
+                npc,
+                start,
+                candidate,
+                allowGoalTransition: false,
+                maximumVisitedTiles: MaximumFollowVisitedTiles,
+                allowedTile: staysInsideLeash);
+            if (found is not null)
+                candidates.Add((candidate, found));
+        }
+
+        (Point StandingTile, List<Point> Path) best = candidates
+            .OrderBy(candidate => candidate.Path.Count)
+            .ThenBy(candidate => candidate.StandingTile.Y)
+            .ThenBy(candidate => candidate.StandingTile.X)
+            .FirstOrDefault();
+        if (best.Path is null)
+        {
+            standingTile = Point.Zero;
+            path = Array.Empty<Point>();
+            return false;
+        }
+
+        standingTile = best.StandingTile;
+        path = best.Path;
+        return true;
+    }
+
     public bool TryFindPathToFollowRange(
         GameLocation location,
         NPC npc,
@@ -239,10 +287,13 @@ internal sealed class NpcTilePathfinder
         Point start,
         Point goal,
         bool allowGoalTransition,
-        int maximumVisitedTiles = MaximumVisitedTiles)
+        int maximumVisitedTiles = MaximumVisitedTiles,
+        Func<Point, bool>? allowedTile = null)
     {
         if (start == goal)
             return new List<Point> { start };
+        if (allowedTile is not null && (!allowedTile(start) || !allowedTile(goal)))
+            return null;
         HashSet<Point> transitionTiles = GetTransitionTiles(location);
         if (!IsWalkable(location, npc, goal, start, goal, allowGoalTransition, transitionTiles))
             return null;
@@ -260,7 +311,8 @@ internal sealed class NpcTilePathfinder
             foreach (Point direction in Directions)
             {
                 Point next = current + direction;
-                if (!IsWalkable(location, npc, next, start, goal, allowGoalTransition, transitionTiles))
+                if ((allowedTile is not null && !allowedTile(next))
+                    || !IsWalkable(location, npc, next, start, goal, allowGoalTransition, transitionTiles))
                     continue;
 
                 int nextCost = cost[current] + 1;

@@ -52,6 +52,9 @@ public sealed class NpcMoveToolService
             .ToArray();
     }
 
+    public bool HasActiveSession(string? npcName)
+        => !string.IsNullOrWhiteSpace(npcName) && sessions.ContainsKey(npcName);
+
     public ConversationMoveExecutionResult Execute(
         NPC npc,
         Farmer leader,

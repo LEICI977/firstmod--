@@ -19,6 +19,7 @@
     <Compile Include="..\..\Models\ConversationGiftModels.cs" Link="Source\ConversationGiftModels.cs" />
     <Compile Include="..\..\Models\ConversationMoveModels.cs" Link="Source\ConversationMoveModels.cs" />
     <Compile Include="..\..\Models\ConversationMineGuardModels.cs" Link="Source\ConversationMineGuardModels.cs" />
+    <Compile Include="..\..\Models\ConversationFishingModels.cs" Link="Source\ConversationFishingModels.cs" />
     <Compile Include="..\..\Models\ConversationContinuationModels.cs" Link="Source\ConversationContinuationModels.cs" />
     <Compile Include="..\..\Models\OvernightMailModels.cs" Link="Source\OvernightMailModels.cs" />
     <Compile Include="..\..\Models\LangGraphModels.cs" Link="Source\LangGraphModels.cs" />

@@ -116,11 +116,13 @@ public sealed class DecisionValidator
                 or NpcGiftToolNames.GiveGift
                 or NpcGiftToolNames.MailGift
                 or NpcMoveToolNames.MoveTo
-                or NpcMineGuardToolNames.InviteMineGuard))
+                or NpcMineGuardToolNames.InviteMineGuard
+                or NpcFishingToolNames.InviteFishingCompanion))
             throw new LangGraphValidationException("Graph returned an unknown tool name.");
         bool isGiftAction = action.Name is NpcGiftToolNames.GiveGift or NpcGiftToolNames.MailGift;
         bool isMoveAction = action.Name == NpcMoveToolNames.MoveTo;
         bool isMineGuardAction = action.Name == NpcMineGuardToolNames.InviteMineGuard;
+        bool isFishingAction = action.Name == NpcFishingToolNames.InviteFishingCompanion;
         if (action.Name == NpcGiftToolNames.None
             && (action.CandidateKey is not null || action.DestinationKey is not null))
         {
@@ -132,6 +134,8 @@ public sealed class DecisionValidator
             throw new LangGraphValidationException("move_to action has invalid argument keys.");
         if (isMineGuardAction && (action.CandidateKey is not null || action.DestinationKey is not null))
             throw new LangGraphValidationException("invite_mine_guard action has invalid argument keys.");
+        if (isFishingAction && (action.CandidateKey is not null || action.DestinationKey is not null))
+            throw new LangGraphValidationException("invite_fishing_companion action has invalid argument keys.");
         if (!action.Delivery.Equals(SocialGiftDeliveryModes.Immediate, StringComparison.Ordinal)
             && !action.Delivery.Equals(SocialGiftDeliveryModes.Mail, StringComparison.Ordinal))
         {
@@ -155,6 +159,8 @@ public sealed class DecisionValidator
         }
         if (isMineGuardAction && !requestSnapshot.MineGuardAvailable)
             throw new LangGraphValidationException("Graph selected mine guard while it is unavailable.");
+        if (isFishingAction && !requestSnapshot.FishingCompanionAvailable)
+            throw new LangGraphValidationException("Graph selected fishing companion while it is unavailable.");
 
         decision.Reply = NormalizeReply(decision.Reply, maximumReplyCharacters);
         if (decision.Reply.Length == 0)
@@ -266,6 +272,7 @@ public sealed class ToolRegistry
         NpcGiftToolNames.MailGift,
         NpcMoveToolNames.MoveTo,
         NpcMineGuardToolNames.InviteMineGuard,
+        NpcFishingToolNames.InviteFishingCompanion,
     };
 
     public bool Contains(string? name)

@@ -48,34 +48,34 @@ public sealed class ModConfig
     public int LangGraphBridgePort { get; set; } = 8124;
 
     /// <summary>Maximum recent memory messages sent with each request.</summary>
-    public int MaxContextMessages { get; set; } = 32;
+    public int MaxContextMessages { get; set; } = 24;
 
     /// <summary>Summarize old messages after this many stored messages.</summary>
-    public int SummaryTriggerMessages { get; set; } = 32;
+    public int SummaryTriggerMessages { get; set; } = 24;
 
     /// <summary>Messages kept verbatim after a successful long-term-memory summary.</summary>
-    public int SummaryKeepRecentMessages { get; set; } = 12;
+    public int SummaryKeepRecentMessages { get; set; } = 8;
 
     /// <summary>Maximum number of seen event IDs included in the live game snapshot.</summary>
-    public int MaxSeenEventIdsInContext { get; set; } = 40;
+    public int MaxSeenEventIdsInContext { get; set; } = 12;
 
     /// <summary>Maximum active quests included in the live game snapshot.</summary>
-    public int MaxQuestsInContext { get; set; } = 8;
+    public int MaxQuestsInContext { get; set; } = 4;
 
     /// <summary>Number of newest vanilla story episodes included with their visible lines intact.</summary>
-    public int MaxCompleteNarrativeEpisodesInContext { get; set; } = 4;
+    public int MaxCompleteNarrativeEpisodesInContext { get; set; } = 2;
 
     /// <summary>Number of older vanilla story episodes represented by stable choices, gifts, and endings.</summary>
-    public int MaxNarrativeEpisodeAnchorsInContext { get; set; } = 24;
+    public int MaxNarrativeEpisodeAnchorsInContext { get; set; } = 8;
 
     /// <summary>Preferred prompt budget for vanilla story context. The newest episode is never cut in half.</summary>
-    public int MaxNarrativeContextCharacters { get; set; } = 12000;
+    public int MaxNarrativeContextCharacters { get; set; } = 6000;
 
     /// <summary>Maximum characters displayed and persisted for one NPC reply.</summary>
     public int MaxReplyCharacters { get; set; } = 1200;
 
     /// <summary>Maximum output tokens requested from DeepSeek for one API operation.</summary>
-    public int MaxOutputTokens { get; set; } = 4096;
+    public int MaxOutputTokens { get; set; } = 2048;
 
     /// <summary>Whether recent positive conversations can produce same-day proactive NPC encounters.</summary>
     public bool EnableSocialDirector { get; set; } = true;
