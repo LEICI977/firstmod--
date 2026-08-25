@@ -776,6 +776,7 @@ public sealed partial class ModEntry : Mod
             PlayerProgress = "详见 systemPrompt 中的玩家进度事实。",
             SystemPrompt = snapshot.SystemPrompt,
             NarrativeContext = snapshot.NarrativeContext,
+            SceneSnapshot = snapshot.SceneSnapshot,
             MemorySummary = recalledMemory,
             RecentSessionFacts = snapshot.RecentSessionFacts ?? Array.Empty<string>(),
             RecentMessages = recentMessages
@@ -3478,6 +3479,8 @@ public sealed partial class ModEntry : Mod
                 info.NpcName,
                 mustBeVillager: false,
                 includeEventActors: false);
+            if (npc is not null)
+                SwitchNpcActivity(npc, NpcMoveToolNames.MoveTo);
             ConversationMoveExecutionResult movement = npc is null
                 ? new ConversationMoveExecutionResult
                 {
@@ -3534,6 +3537,8 @@ public sealed partial class ModEntry : Mod
                 info.NpcName,
                 mustBeVillager: false,
                 includeEventActors: false);
+            if (npc is not null)
+                SwitchNpcActivity(npc, NpcMineGuardToolNames.InviteMineGuard);
             ConversationMineGuardExecutionResult mineGuard = npc is null
                 ? new ConversationMineGuardExecutionResult
                 {
@@ -3589,6 +3594,8 @@ public sealed partial class ModEntry : Mod
                 info.NpcName,
                 mustBeVillager: false,
                 includeEventActors: false);
+            if (npc is not null)
+                SwitchNpcActivity(npc, NpcFishingToolNames.InviteFishingCompanion);
             ConversationFishingExecutionResult fishing = npc is null
                 ? new ConversationFishingExecutionResult
                 {
@@ -3599,8 +3606,7 @@ public sealed partial class ModEntry : Mod
                 : npcFishingService.Execute(
                     npc,
                     Game1.player,
-                    npcMoveToolService.HasActiveSession(npc.Name)
-                    || npcMineGuardService.HasActiveSession(npc.Name));
+                    controlledByAnotherSession: false);
             targetState.FishingExecution = fishing;
             var fishingResult = new GameBridgeToolResult
             {
@@ -3676,6 +3682,32 @@ public sealed partial class ModEntry : Mod
             request.ContextVersion ?? string.Empty,
             result);
         return result;
+    }
+
+    private void SwitchNpcActivity(NPC npc, string nextTool)
+    {
+        bool moveCanceled = npcMoveToolService.CancelNpc(npc.Name, $"replaced_by_{nextTool}");
+        bool mineCanceled = npcMineGuardService.CancelNpc(npc.Name, $"replaced_by_{nextTool}");
+        bool fishingCanceled = npcFishingService.CancelNpc(npc.Name, $"replaced_by_{nextTool}");
+        bool hadController = npc.controller is not null
+                             || npc.temporaryController is not null
+                             || npc.queuedSchedulePaths.Count > 0;
+
+        if (moveCanceled || mineCanceled || fishingCanceled || hadController)
+        {
+            // A completed session may have handed control back to a vanilla
+            // schedule route. Clear that route only when a new action was
+            // explicitly confirmed; ordinary chat never reaches this method.
+            npc.controller = null;
+            npc.temporaryController = null;
+            npc.queuedSchedulePaths.Clear();
+            npc.Halt();
+            Monitor.Log(
+                $"npc_activity_switch npc={npc.Name} target={nextTool} "
+                + $"cancelled(move={moveCanceled},mine={mineCanceled},fishing={fishingCanceled}) "
+                + $"controller_cleared={hadController}.",
+                LogLevel.Info);
+        }
     }
 
     private static GameBridgeToolResult RejectGameBridgeTool(

@@ -1,6 +1,9 @@
 using System.Text;
+using Microsoft.Xna.Framework;
 using StardewValley;
+using StardewValley.Monsters;
 using StardewValley.Quests;
+using StardewValley.TerrainFeatures;
 
 namespace VivantValley.Services;
 
@@ -35,6 +38,10 @@ public sealed class GameContextBuilder
         builder.AppendLine($"- 玩家地点：{SafeLocationName(Game1.currentLocation)}；村民地点：{SafeLocationName(npc.currentLocation)}");
         bool isFestivalDay = Utility.isFestivalDay() || Utility.IsPassiveFestivalDay();
         builder.AppendLine($"- 当地天气：{DescribeWeather(Game1.currentLocation)}；今天是否节日：{YesNo(isFestivalDay)}；当前是否正在节日活动：{YesNo(Game1.isFestival())}");
+
+        string sceneSnapshot = BuildSceneSnapshot(npc);
+        builder.AppendLine("【NPC 当前场景快照】");
+        builder.AppendLine(sceneSnapshot);
 
         builder.AppendLine("【玩家与该村民的关系】");
         builder.AppendLine($"- 好感点数：{points}；红心：{hearts}；状态：{DescribeRelationship(friendship)}");
@@ -71,8 +78,187 @@ public sealed class GameContextBuilder
         builder.AppendLine("move_to 可用于你真心接受的玩家同行请求或你主动提出的同行。玩家提出目的地不代表你必须接受；只有关系、地点和你的个人动机都符合当前角色时才能调用，并在玩家确认且工具成功后声称出发。");
 
         builder.AppendLine("invite_mine_guard 是一个独立的下矿护卫邀请：只有当这个 NPC 按自己的性格、关系和当前动机确实愿意陪玩家下矿时才能调用，绝不是命令，也不是看到‘一起下矿’就必须接受。移动、战斗、受伤和击杀结果都由游戏决定。");
-        return new NpcGameSnapshot(npc.Name, npc.displayName, builder.ToString());
+        return new NpcGameSnapshot(npc.Name, npc.displayName, builder.ToString(), SceneSnapshot: sceneSnapshot);
     }
+
+    private static string BuildSceneSnapshot(NPC npc)
+    {
+        GameLocation? location = npc.currentLocation;
+        if (location is null)
+            return "- 场景：未知（NPC 当前没有有效地点）";
+
+        Point center = npc.TilePoint;
+        var lines = new List<string>(8)
+        {
+            $"- 地点：{SafeLocationName(location)}；NPC 瓦片：{center.X},{center.Y}；户外：{YesNo(location.IsOutdoors)}",
+            $"- 朝向：{DescribeFacing(npc.FacingDirection)}；移动控制：{DescribeMovement(npc)}",
+        };
+
+        var nearbyCharacters = location.characters
+            .Where(character => !ReferenceEquals(character, npc)
+                                && !character.IsInvisible
+                                && IsNear(character.TilePoint, center, 5))
+            .GroupBy(character => character is Monster ? "怪物" : "其他 NPC")
+            .Select(group =>
+            {
+                string names = string.Join("、", group
+                    .Take(4)
+                    .Select(character => Clean(character.displayName ?? character.Name)));
+                return $"{group.Key} {group.Count()} 个（{names}）";
+            })
+            .ToArray();
+        if (nearbyCharacters.Length > 0)
+            lines.Add("- 附近人物：" + string.Join("；", nearbyCharacters));
+
+        string[] nearbyObjects = location.objects.Pairs
+            .Where(pair => IsNear(pair.Key, center, 5))
+            .Select(pair => DescribeObject(pair.Value))
+            .Where(value => value.Length > 0)
+            .GroupBy(value => value, StringComparer.Ordinal)
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .Take(8)
+            .Select(group => group.Count() > 1 ? $"{group.Key} x{group.Count()}" : group.Key)
+            .ToArray();
+        if (nearbyObjects.Length > 0)
+            lines.Add("- 附近物品/设施：" + string.Join("、", nearbyObjects));
+
+        string[] nearbyTerrain = location.terrainFeatures.Pairs
+            .Where(pair => IsNear(pair.Key, center, 5))
+            .Select(pair => DescribeTerrain(pair.Value))
+            .Where(value => value.Length > 0)
+            .GroupBy(value => value, StringComparer.Ordinal)
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .Take(8)
+            .Select(group => group.Count() > 1 ? $"{group.Key} x{group.Count()}" : group.Key)
+            .ToArray();
+        if (nearbyTerrain.Length > 0)
+            lines.Add("- 附近植物/地面：" + string.Join("、", nearbyTerrain));
+
+        string[] nearbyLargeTerrain = location.largeTerrainFeatures
+            .Where(feature => IsNear(feature.Tile, center, 6))
+            .Select(feature => DescribeLargeTerrain(feature))
+            .Where(value => value.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .Take(5)
+            .ToArray();
+        if (nearbyLargeTerrain.Length > 0)
+            lines.Add("- 附近大型植物：" + string.Join("、", nearbyLargeTerrain));
+
+        if (lines.Count == 2)
+            lines.Add("- 周围可识别事物：没有记录到特别显眼的物品或植物");
+        lines.Add("- 使用规则：只把这些实时观察当作当前场景线索；不要逐条复述，也不要凭空补充未观察到的细节。附近作物名称只有在快照明确列出时才算已识别；空耕地或未知作物不能推断具体品种。");
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static bool IsNear(Vector2 tile, Point center, int radius)
+        => Math.Abs((int)tile.X - center.X) <= radius
+           && Math.Abs((int)tile.Y - center.Y) <= radius;
+
+    private static bool IsNear(Point tile, Point center, int radius)
+        => Math.Abs(tile.X - center.X) <= radius
+           && Math.Abs(tile.Y - center.Y) <= radius;
+
+    private static string DescribeObject(StardewValley.Object? value)
+    {
+        if (value is null)
+            return string.Empty;
+        try
+        {
+            string name = Clean(value.DisplayName);
+            return name.Length == 0 ? Clean(value.Name) : name;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string DescribeTerrain(TerrainFeature? feature)
+        => feature switch
+        {
+            Tree tree when tree.stump.Value => "树桩",
+            Tree => "树",
+            FruitTree => "果树",
+            HoeDirt dirt => DescribeHoeDirt(dirt),
+            Grass => "草地",
+            Flooring => "地板",
+            _ => feature is null ? string.Empty : DescribeTypeName(feature.GetType().Name),
+        };
+
+    private static string DescribeHoeDirt(HoeDirt dirt)
+    {
+        Crop? crop = dirt.crop;
+        if (crop is null)
+            return "空耕地（未种植）";
+
+        string cropName = ResolveCropName(crop);
+        string growthState = crop.dead.Value
+            ? "已枯萎"
+            : crop.fullyGrown.Value
+                ? "已成熟"
+                : "正在生长";
+        return $"{cropName}（{growthState}）";
+    }
+
+    private static string ResolveCropName(Crop crop)
+    {
+        try
+        {
+            string? harvestItemId = crop.GetData()?.HarvestItemId;
+            if (string.IsNullOrWhiteSpace(harvestItemId))
+                harvestItemId = crop.indexOfHarvest.Value;
+
+            if (!string.IsNullOrWhiteSpace(harvestItemId))
+            {
+                string qualifiedId = harvestItemId.StartsWith("(", StringComparison.Ordinal)
+                    ? harvestItemId
+                    : "(O)" + harvestItemId;
+                string displayName = Clean(ItemRegistry.GetData(qualifiedId)?.DisplayName);
+                if (displayName.Length > 0)
+                    return displayName;
+            }
+        }
+        catch
+        {
+            // A modded or partially loaded crop must not cause the whole snapshot to fail.
+        }
+
+        return "未知作物（已种植）";
+    }
+
+    private static string DescribeLargeTerrain(LargeTerrainFeature? feature)
+        => feature is null ? string.Empty : DescribeTypeName(feature.GetType().Name);
+
+    private static string DescribeTypeName(string typeName)
+        => typeName switch
+        {
+            "Bush" => "灌木",
+            "Grass" => "草地",
+            "Tree" => "树",
+            "FruitTree" => "果树",
+            _ => typeName.Replace("LargeTerrainFeature", "", StringComparison.Ordinal),
+        };
+
+    private static string DescribeMovement(NPC npc)
+    {
+        if (npc.temporaryController is not null)
+            return "正在执行临时路径或跟随动作";
+        if (npc.controller is not null)
+            return "正在执行日程路径";
+        return "当前没有路径控制，可能停留或自由行动";
+    }
+
+    private static string DescribeFacing(int facingDirection)
+        => facingDirection switch
+        {
+            0 => "上",
+            1 => "右",
+            2 => "下",
+            3 => "左",
+            _ => "未知",
+        };
 
     private void AppendCombatState(StringBuilder builder, NPC npc)
     {
@@ -216,4 +402,5 @@ public sealed record NpcGameSnapshot(
     string NpcDisplayName,
     string SystemPrompt,
     string NarrativeContext = "",
-    IReadOnlyList<string>? RecentSessionFacts = null);
+    IReadOnlyList<string>? RecentSessionFacts = null,
+    string SceneSnapshot = "");

@@ -24,6 +24,8 @@ public sealed class NpcContextSnapshot
     public IReadOnlyList<LangGraphConversationMessage> RecentMessages { get; set; }
         = Array.Empty<LangGraphConversationMessage>();
     public string NarrativeContext { get; set; } = string.Empty;
+    /// <summary>Short, live scene observation around the NPC for grounded dialogue.</summary>
+    public string SceneSnapshot { get; set; } = string.Empty;
     public string ActivitySummary { get; set; } = string.Empty;
     public IReadOnlyList<LangGraphGiftCandidate> AllowedTools { get; set; }
         = Array.Empty<LangGraphGiftCandidate>();

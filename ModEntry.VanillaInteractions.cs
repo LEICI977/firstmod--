@@ -486,6 +486,23 @@ public sealed partial class ModEntry
     private NpcGameSnapshot BuildNpcGameSnapshot(NPC npc, string? playerId = null)
     {
         NpcGameSnapshot snapshot = contextBuilder.Build(npc);
+        string[] activeActivities = new[]
+        {
+            npcMoveToolService.GetActivitySummary(npc.Name),
+            npcMineGuardService.GetActivitySummary(npc.Name),
+            npcFishingService.GetActivitySummary(npc.Name),
+        }
+        .Where(value => !string.IsNullOrWhiteSpace(value))
+        .Cast<string>()
+        .ToArray();
+        string sceneSnapshot = snapshot.SceneSnapshot;
+        string activitySupplement = string.Empty;
+        if (activeActivities.Length > 0)
+        {
+            string activityText = string.Join("；", activeActivities);
+            sceneSnapshot = sceneSnapshot.TrimEnd() + "\n- 当前特殊活动：" + activityText;
+            activitySupplement = "\n\n【NPC 实时活动补充】\n- 当前特殊活动：" + activityText;
+        }
         string resolvedPlayerId = playerId ?? GetPlayerId();
         NpcConversationMemory? conversationMemory = memoryStore.TryGet(
             resolvedPlayerId,
@@ -506,11 +523,13 @@ public sealed partial class ModEntry
 
         return snapshot with
         {
-            SystemPrompt = narrativeContext.Length == 0
+            SystemPrompt = (narrativeContext.Length == 0
                 ? snapshot.SystemPrompt
-                : snapshot.SystemPrompt.TrimEnd() + "\n\n" + narrativeContext,
+                : snapshot.SystemPrompt.TrimEnd() + "\n\n" + narrativeContext)
+                + activitySupplement,
             NarrativeContext = narrativeContext,
             RecentSessionFacts = sessionFacts,
+            SceneSnapshot = sceneSnapshot,
         };
     }
 

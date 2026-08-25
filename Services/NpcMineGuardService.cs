@@ -33,6 +33,11 @@ public sealed class NpcMineGuardService
     public bool HasActiveSession(string? npcName)
         => !string.IsNullOrWhiteSpace(npcName) && sessions.ContainsKey(npcName);
 
+    public string? GetActivitySummary(string? npcName)
+        => !string.IsNullOrWhiteSpace(npcName) && sessions.ContainsKey(npcName)
+            ? "正在陪玩家下矿并担任护卫，留意附近怪物"
+            : null;
+
     /// <summary>
     /// Returns the authoritative reason why the mine-guard tool is unavailable.
     /// A null result means the game can start the session if the NPC chooses to accept.
@@ -61,6 +66,12 @@ public sealed class NpcMineGuardService
 
         try
         {
+            if (sessions.TryGetValue(npc.Name, out NpcMineGuardSession? existingSession))
+            {
+                existingSession.Cancel("replaced_by_new_mine_guard");
+                sessions.Remove(npc.Name);
+            }
+
             sessions[npc.Name] = new NpcMineGuardSession(
                 npc,
                 leader,
@@ -105,6 +116,19 @@ public sealed class NpcMineGuardService
         sessions.Clear();
     }
 
+    public bool CancelNpc(string? npcName, string reason)
+    {
+        if (string.IsNullOrWhiteSpace(npcName)
+            || !sessions.TryGetValue(npcName, out NpcMineGuardSession? session))
+        {
+            return false;
+        }
+
+        session.Cancel(reason);
+        sessions.Remove(npcName);
+        return true;
+    }
+
     public void DrawWorld(SpriteBatch spriteBatch)
     {
         foreach (NpcMineGuardSession session in sessions.Values)
@@ -128,8 +152,6 @@ public sealed class NpcMineGuardService
             reason = "event_active";
         else if (Game1.timeOfDay is < 600 or > 2300)
             reason = "time_not_allowed";
-        else if (sessions.ContainsKey(npc.Name) || npc.controller is not null || npc.temporaryController is not null)
-            reason = "npc_busy";
         return reason.Length == 0;
     }
 

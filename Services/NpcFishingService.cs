@@ -31,6 +31,11 @@ public sealed class NpcFishingService
     public bool HasActiveSession(string? npcName)
         => !string.IsNullOrWhiteSpace(npcName) && sessions.ContainsKey(npcName);
 
+    public string? GetActivitySummary(string? npcName)
+        => !string.IsNullOrWhiteSpace(npcName) && sessions.ContainsKey(npcName)
+            ? "正在和玩家同行钓鱼，等待玩家抛竿或处理鱼获"
+            : null;
+
     public string? GetAvailabilityReason(
         NPC npc,
         GameLocation? playerLocation,
@@ -53,13 +58,6 @@ public sealed class NpcFishingService
             return "npc_hospitalized";
         if (Game1.eventUp || Game1.isFestival() || playerLocation.currentEvent is not null)
             return "event_active";
-        if (controlledByAnotherSession
-            || sessions.ContainsKey(npc.Name)
-            || npc.controller is not null
-            || npc.temporaryController is not null)
-        {
-            return "npc_busy";
-        }
         return null;
     }
 
@@ -76,6 +74,12 @@ public sealed class NpcFishingService
 
         try
         {
+            if (sessions.TryGetValue(npc.Name, out NpcFishingSession? existingSession))
+            {
+                existingSession.Cancel("replaced_by_new_fishing");
+                sessions.Remove(npc.Name);
+            }
+
             sessions[npc.Name] = new NpcFishingSession(
                 npc,
                 leader,
@@ -131,6 +135,19 @@ public sealed class NpcFishingService
         foreach (NpcFishingSession session in sessions.Values)
             session.Cancel(reason);
         sessions.Clear();
+    }
+
+    public bool CancelNpc(string? npcName, string reason)
+    {
+        if (string.IsNullOrWhiteSpace(npcName)
+            || !sessions.TryGetValue(npcName, out NpcFishingSession? session))
+        {
+            return false;
+        }
+
+        session.Cancel(reason);
+        sessions.Remove(npcName);
+        return true;
     }
 
     private static ConversationFishingExecutionResult Rejected(string reason)

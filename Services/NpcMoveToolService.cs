@@ -55,6 +55,11 @@ public sealed class NpcMoveToolService
     public bool HasActiveSession(string? npcName)
         => !string.IsNullOrWhiteSpace(npcName) && sessions.ContainsKey(npcName);
 
+    public string? GetActivitySummary(string? npcName)
+        => !string.IsNullOrWhiteSpace(npcName) && sessions.ContainsKey(npcName)
+            ? "正在和玩家进行共同旅行，跟随玩家前往约定地点"
+            : null;
+
     public ConversationMoveExecutionResult Execute(
         NPC npc,
         Farmer leader,
@@ -159,6 +164,19 @@ public sealed class NpcMoveToolService
         foreach (NpcTravelSession session in sessions.Values)
             session.Cancel(reason);
         sessions.Clear();
+    }
+
+    public bool CancelNpc(string? npcName, string reason)
+    {
+        if (string.IsNullOrWhiteSpace(npcName)
+            || !sessions.TryGetValue(npcName, out NpcTravelSession? session))
+        {
+            return false;
+        }
+
+        session.Cancel(reason);
+        sessions.Remove(npcName);
+        return true;
     }
 
     private bool CanStartMovement(
