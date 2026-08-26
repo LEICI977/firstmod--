@@ -70,9 +70,21 @@ if (Test-Path -LiteralPath $storyAssetsPath) {
     Copy-Item -LiteralPath $storyAssetsPath -Destination $packageAssetsPath -Recurse
 }
 
-if (Test-Path -LiteralPath $backendArtifacts) {
-    $packageBackendPath = Join-Path $packageDirectory "backend"
-    Copy-Item -LiteralPath $backendArtifacts -Destination $packageBackendPath -Recurse -Force
+if (-not (Test-Path -LiteralPath $backendArtifacts -PathType Container)) {
+    throw "Bundled backend artifacts are missing: $backendArtifacts. Build the backend before packaging."
+}
+
+$backendPlatforms = @(Get-ChildItem -LiteralPath $backendArtifacts -Directory)
+if ($backendPlatforms.Count -eq 0) {
+    throw "No bundled backend platform directories were found under: $backendArtifacts"
+}
+
+$packageBackendPath = Join-Path $packageDirectory "backend"
+Copy-Item -LiteralPath $backendArtifacts -Destination $packageBackendPath -Recurse -Force
+
+$windowsBackendExecutable = Join-Path $packageBackendPath "win-x64\VivantValley.LangGraph.exe"
+if (-not (Test-Path -LiteralPath $windowsBackendExecutable -PathType Leaf)) {
+    throw "The Windows bundled backend is missing from the package: $windowsBackendExecutable"
 }
 
 $backendReadme = Join-Path $projectRoot "backend\README.md"
