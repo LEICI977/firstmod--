@@ -12,3 +12,4 @@ __pycache__/
 artifacts/
 backend-build-*/
 backend-build-current/
+langgraph_service/models/faster-whisper-base/
