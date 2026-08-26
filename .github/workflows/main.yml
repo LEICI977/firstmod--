@@ -1,0 +1,42 @@
+name: Build bundled LangGraph backends
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            platform: win-x64
+          - runner: macos-13
+            platform: osx-x64
+          - runner: macos-14
+            platform: osx-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        shell: bash
+        run: python -m pip install -r langgraph_service/requirements.txt pyinstaller
+      - name: Freeze backend
+        shell: bash
+        run: |
+          python -m PyInstaller --noconfirm --clean --onedir \
+            --name VivantValley.LangGraph \
+            --distpath _backend-build/dist \
+            --workpath _backend-build/work \
+            --specpath _backend-build \
+            langgraph_service/app.py
+          mkdir -p artifacts/backend/${{ matrix.platform }}
+          cp -R _backend-build/dist/VivantValley.LangGraph/* artifacts/backend/${{ matrix.platform }}/
+          if [[ "${{ matrix.platform }}" == osx-* ]]; then chmod +x artifacts/backend/${{ matrix.platform }}/VivantValley.LangGraph; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vivant-valley-backend-${{ matrix.platform }}
+          path: artifacts/backend/${{ matrix.platform }}
