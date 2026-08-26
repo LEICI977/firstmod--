@@ -177,9 +177,12 @@ public sealed class LangGraphProcessManager : IDisposable
     {
         try
         {
-            while (!reader.EndOfStream)
+            while (true)
             {
                 string? line = await reader.ReadLineAsync().ConfigureAwait(false);
+                if (line is null)
+                    break;
+
                 if (!string.IsNullOrWhiteSpace(line))
                     log($"LangGraph {(isError ? "stderr" : "stdout")}：{line.Trim()}");
             }
