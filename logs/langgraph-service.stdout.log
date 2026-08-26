@@ -1,2 +1,28 @@
 Vivant Valley LangGraph service listening on http://127.0.0.1:8123
 [langgraph] "GET /health HTTP/1.1" 200 -
+[langgraph] provider_usage requestId=e083a651844440c7897973c340ace2d9 prompt=10291 completion=88 total=10379 cache_hit=0 cache_miss=10291
+[langgraph] provider_usage requestId=e083a651844440c7897973c340ace2d9 prompt=5493 completion=261 total=5754 cache_hit=0 cache_miss=5493
+[langgraph] "POST /v1/graph/decision HTTP/1.1" 200 -
+[langgraph] provider_usage requestId=c56c15cef1db48938a92138162196756 prompt=10131 completion=125 total=10256 cache_hit=2944 cache_miss=7187
+[langgraph] "POST /v1/graph/decision HTTP/1.1" 200 -
+[langgraph] provider_usage requestId=c56c15cef1db48938a92138162196756 prompt=5633 completion=310 total=5943 cache_hit=2944 cache_miss=2689
+[langgraph] "POST /v1/graph/confirm HTTP/1.1" 200 -
+[langgraph] provider_usage requestId=3ca6c6d295ff4e48b32e5305a925be1b prompt=10251 completion=110 total=10361 cache_hit=0 cache_miss=10251
+[langgraph] provider_usage requestId=3ca6c6d295ff4e48b32e5305a925be1b prompt=5487 completion=294 total=5781 cache_hit=0 cache_miss=5487
+[langgraph] "POST /v1/graph/decision HTTP/1.1" 200 -
+[langgraph] provider_usage requestId=b3398f6481b942ae976500c46354331f prompt=10346 completion=85 total=10431 cache_hit=0 cache_miss=10346
+[langgraph] provider_usage requestId=b3398f6481b942ae976500c46354331f prompt=5448 completion=275 total=5723 cache_hit=0 cache_miss=5448
+[langgraph] "POST /v1/graph/decision HTTP/1.1" 200 -
+[langgraph] provider_usage requestId=0cc68a394df947a4b00209fab8df9f2f prompt=10327 completion=136 total=10463 cache_hit=3200 cache_miss=7127
+[langgraph] provider_usage requestId=0cc68a394df947a4b00209fab8df9f2f prompt=5538 completion=330 total=5868 cache_hit=3200 cache_miss=2338
+[langgraph] "POST /v1/graph/decision HTTP/1.1" 200 -
+[langgraph] provider_usage requestId=201d8985ec89488790d1fc5d740c3aaf prompt=10352 completion=116 total=10468 cache_hit=5120 cache_miss=5232
+[langgraph] provider_usage requestId=201d8985ec89488790d1fc5d740c3aaf prompt=5619 completion=282 total=5901 cache_hit=3712 cache_miss=1907
+[langgraph] "POST /v1/graph/decision HTTP/1.1" 200 -
+[langgraph] "GET /health HTTP/1.1" 200 -
+[langgraph] provider_usage requestId=ccb82f6b98a546b9936719ff94be9d3a prompt=8582 completion=27 total=8609 cache_hit=0 cache_miss=8582
+[langgraph] provider_usage requestId=ccb82f6b98a546b9936719ff94be9d3a prompt=4474 completion=209 total=4683 cache_hit=0 cache_miss=4474
+[langgraph] "POST /v1/graph/decision HTTP/1.1" 200 -
+[langgraph] provider_usage requestId=3a7299bc130a485a847e7aeba478dd47 prompt=8575 completion=43 total=8618 cache_hit=2560 cache_miss=6015
+[langgraph] provider_usage requestId=3a7299bc130a485a847e7aeba478dd47 prompt=4421 completion=209 total=4630 cache_hit=2560 cache_miss=1861
+[langgraph] "POST /v1/graph/decision HTTP/1.1" 200 -

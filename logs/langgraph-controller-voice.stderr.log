@@ -1,0 +1,3 @@
+C:\Users\86157\Desktop\firstmod--\.langgraph-venv\Lib\site-packages\langgraph\checkpoint\base\__init__.py:17: LangChainPendingDeprecationWarning: The default value of `allowed_objects` will change in a future version. Pass an explicit value (e.g., allowed_objects='messages' or allowed_objects='core') to suppress this warning.
+  from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+OpenBLAS error: Memory allocation still failed after 10 retries, giving up.

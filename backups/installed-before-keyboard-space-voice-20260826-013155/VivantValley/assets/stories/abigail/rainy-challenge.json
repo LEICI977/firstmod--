@@ -1,0 +1,65 @@
+{
+  "id": "abigail.rainy-challenge.02b",
+  "version": 1,
+  "npc": "Abigail",
+  "priority": 90,
+  "enabled": true,
+  "repeatable": false,
+  "trigger": {
+    "minHearts": 2,
+    "minConversationTurns": 1,
+    "delayDays": 2,
+    "expiryDays": 6,
+    "cooldownDays": 0,
+    "requiredFlags": ["abigail.arc.route-playful"],
+    "forbiddenFlags": ["abigail.arc.middle-complete", "abigail.arc.complete"]
+  },
+  "scene": {
+    "startTime": 900,
+    "endTime": 2200,
+    "activationDistanceTiles": 8.0,
+    "giftItemId": "",
+    "aiBrief": "Abigail还记得玩家追问石英是不是特意挑的。她用一场寻找奇怪石头的小比赛掩饰害羞，却也给玩家机会继续开玩笑，或者坦白自己其实很重视那份礼物。",
+    "fallbackText": "你上次的问题还真是穷追不舍……好吧，我确实挑了一会儿。作为交换，下次下雨时我们比一场怎么样？谁先找到最奇怪的石头，谁就能问对方一个不能躲的问题。你敢不敢？",
+    "acceptText": "接受挑战",
+    "deferText": "改天再说"
+  },
+  "choices": [
+    {
+      "id": "play-along",
+      "text": "当然敢，输的人可不许耍赖",
+      "memoryText": "我接下Abigail的挑战，还笑着提醒她输了不能耍赖。",
+      "receiveGift": false,
+      "defer": false,
+      "nextStoryId": "abigail.starlight-promise.03",
+      "effects": {
+        "trust": 3,
+        "affection": 3,
+        "setFlags": ["abigail.arc.middle-complete", "abigail.arc.answer-playful"]
+      }
+    },
+    {
+      "id": "honest",
+      "text": "其实我追问，是因为很在意那份礼物",
+      "memoryText": "我坦白告诉Abigail，我追问她，是因为我真的很在意她送的石英。",
+      "receiveGift": false,
+      "defer": false,
+      "nextStoryId": "abigail.starlight-promise.03",
+      "effects": {
+        "trust": 2,
+        "affection": 5,
+        "setFlags": ["abigail.arc.middle-complete", "abigail.arc.answer-honest"]
+      }
+    },
+    {
+      "id": "defer",
+      "text": "今天先放过我，改天再比",
+      "memoryText": "我请Abigail把挑战留到改天。",
+      "receiveGift": false,
+      "defer": true,
+      "nextStoryId": "",
+      "effects": {"trust": 0, "affection": 0, "setFlags": []}
+    }
+  ],
+  "acceptEffects": {"trust": 0, "affection": 0, "setFlags": []}
+}

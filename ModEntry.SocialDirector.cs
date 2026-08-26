@@ -1371,6 +1371,15 @@ public sealed partial class ModEntry
     private void OnMenuChanged(object? sender, MenuChangedEventArgs e)
     {
         TrackVanillaMenuChanged(e);
+        if (e.OldMenu is AiChatInputMenu && !ReferenceEquals(e.OldMenu, e.NewMenu))
+        {
+            ConversationScreenState state = screenStates.Value;
+            state.KeyboardSpacePressed = false;
+            state.KeyboardSpaceLongTriggered = false;
+            state.KeyboardSpaceElapsedTicks = 0;
+            CancelVoiceRecording(screenStates.Value);
+        }
+
         if (!Context.IsWorldReady || !Context.IsMainPlayer)
         {
             openGiftMailIds.Value = string.Empty;

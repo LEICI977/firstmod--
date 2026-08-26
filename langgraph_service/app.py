@@ -18,6 +18,7 @@ import urllib.error
 import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, Annotated, TypedDict
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage
@@ -32,6 +33,134 @@ from langgraph.types import Command, interrupt
 PENDING_GRAPH_TTL_SECONDS = 600
 pending_graph_lock = threading.Lock()
 pending_graphs: dict[str, dict[str, Any]] = {}
+
+
+class SpeechRecorder:
+    """Process-local microphone recorder with lazy Whisper model loading."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._stream: Any = None
+        self._frames: list[Any] = []
+        self._recording = False
+        self._model: Any = None
+        self._model_lock = threading.Lock()
+
+    def start(self) -> None:
+        try:
+            import sounddevice as sd
+            import numpy as np
+        except ImportError as error:
+            raise RuntimeError(
+                "voice input requires sounddevice and numpy; install langgraph_service requirements"
+            ) from error
+
+        with self._lock:
+            if self._recording:
+                raise RuntimeError("voice recording is already active")
+            self._frames = []
+
+            def callback(indata: Any, _frames: int, _time: Any, status: Any) -> None:
+                if status:
+                    print(f"[langgraph] microphone status: {status}", flush=True)
+                frame = np.asarray(indata[:, 0], dtype=np.float32).copy()
+                # PortAudio may invoke the callback before InputStream.start()
+                # returns. Avoid taking the lifecycle lock from that callback.
+                if self._recording:
+                    self._frames.append(frame)
+
+            try:
+                self._stream = sd.InputStream(
+                    samplerate=16000,
+                    channels=1,
+                    dtype="float32",
+                    callback=callback,
+                )
+                self._recording = True
+                self._stream.start()
+            except Exception:
+                self._stream = None
+                self._frames = []
+                self._recording = False
+                raise
+
+    def stop_and_transcribe(self) -> str:
+        audio = self._stop_capture()
+        if audio is None or getattr(audio, "size", 0) == 0:
+            return ""
+
+        try:
+            model = self._get_model()
+        except ImportError as error:
+            raise RuntimeError(
+                "voice input requires faster-whisper; install langgraph_service requirements"
+            ) from error
+
+        segments, _info = model.transcribe(
+            audio,
+            language="zh",
+            vad_filter=True,
+            beam_size=5,
+        )
+        return "".join(str(segment.text) for segment in segments).strip()
+
+    def cancel(self) -> None:
+        self._stop_capture()
+
+    def _stop_capture(self) -> Any:
+        with self._lock:
+            stream = self._stream
+            frames = self._frames
+            self._stream = None
+            self._frames = []
+            self._recording = False
+
+        if stream is not None:
+            try:
+                stream.stop()
+            finally:
+                stream.close()
+
+        if not frames:
+            return None
+        import numpy as np
+        return np.concatenate(frames)
+
+    def _get_model(self) -> Any:
+        with self._model_lock:
+            if self._model is None:
+                from faster_whisper import WhisperModel
+
+                bundled_model = Path(__file__).resolve().parent / "models" / "faster-whisper-base"
+                configured_model = os.environ.get("VIVANT_WHISPER_MODEL", "").strip()
+                model_path = Path(configured_model) if configured_model else bundled_model
+                if not model_path.is_dir():
+                    raise RuntimeError(
+                        f"local Whisper model not found: {model_path}. "
+                        "Install the bundled faster-whisper-base model."
+                    )
+
+                required_files = ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt")
+                missing_files = [name for name in required_files if not (model_path / name).is_file()]
+                if missing_files:
+                    raise RuntimeError(
+                        f"local Whisper model is incomplete: missing {', '.join(missing_files)}"
+                    )
+
+                device = os.environ.get("VIVANT_WHISPER_DEVICE", "cpu")
+                compute_type = os.environ.get(
+                    "VIVANT_WHISPER_COMPUTE_TYPE",
+                    "int8" if device == "cpu" else "float16",
+                )
+                self._model = WhisperModel(
+                    str(model_path),
+                    device=device,
+                    compute_type=compute_type,
+                )
+            return self._model
+
+
+speech_recorder = SpeechRecorder()
 
 
 class GraphState(TypedDict, total=False):
@@ -1361,6 +1490,21 @@ class Handler(BaseHTTPRequestHandler):
         self.write_json(HTTPStatus.OK, {"status": "ok", "graph": "conversation-toolnode"})
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.path in {"/v1/stt/start", "/v1/stt/stop", "/v1/stt/cancel"}:
+            try:
+                if self.path == "/v1/stt/start":
+                    speech_recorder.start()
+                    result = {"status": "recording"}
+                elif self.path == "/v1/stt/stop":
+                    result = {"text": speech_recorder.stop_and_transcribe()}
+                else:
+                    speech_recorder.cancel()
+                    result = {"status": "canceled"}
+                self.write_json(HTTPStatus.OK, result)
+            except Exception as error:
+                self.write_json(HTTPStatus.BAD_GATEWAY, {"error": sanitize(str(error))})
+            return
+
         if self.path not in {"/v1/graph/decision", "/v1/graph/confirm"}:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
