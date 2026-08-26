@@ -61,6 +61,7 @@ public sealed class DailySocialPlanner
             Day = day,
             PlannerVersion = normalizedOptions.PlannerVersion,
             Seed = seed,
+            ControllerMode = normalizedOptions.ControllerMode,
         };
 
         if (eligible.Count == 0 || normalizedOptions.MaximumCandidates == 0)
@@ -73,7 +74,9 @@ public sealed class DailySocialPlanner
             ? upperBound
             : random.NextInt32(lowerBound, checked(upperBound + 1));
 
-        List<SocialCandidateEvaluation> selected = SampleWithoutReplacement(eligible, selectionCount, random);
+        List<SocialCandidateEvaluation> selected = normalizedOptions.PrioritizeRecentPlayerGifts
+            ? SelectPrioritizingRecentPlayerGifts(eligible, selectionCount, random)
+            : SampleWithoutReplacement(eligible, selectionCount, random);
         for (int index = 0; index < selected.Count; index++)
         {
             SocialCandidateEvaluation evaluation = selected[index];
@@ -178,6 +181,9 @@ public sealed class DailySocialPlanner
         if (candidate.RelationshipBlocked)
             return Excluded(npcName, "relationship_blocked");
 
+        if (!options.RequireRecentPositiveConversation)
+            return EvaluateOpenPoolCandidate(candidate, npcName, day, options);
+
         List<ConversationSignal> recentSignals = (candidate.RecentSignals ?? new List<ConversationSignal>())
             .Where(signal => signal is not null)
             .Select(signal => signal.CloneNormalized())
@@ -265,6 +271,48 @@ public sealed class DailySocialPlanner
             NpcName = npcName,
             IsEligible = true,
             Score = SocialModelNormalization.ClampFinite(score, 0d, 1d),
+            LastPlayerGiftDay = candidate.LastPlayerGiftDay <= day ? candidate.LastPlayerGiftDay : -1,
+            ReasonTags = reasonTags,
+        };
+    }
+
+    private static SocialCandidateEvaluation EvaluateOpenPoolCandidate(
+        SocialPlanningCandidate candidate,
+        string npcName,
+        int day,
+        DailySocialPlannerOptions options)
+    {
+        int lastPlayerGiftDay = candidate.LastPlayerGiftDay >= 0 && candidate.LastPlayerGiftDay <= day
+            ? candidate.LastPlayerGiftDay
+            : -1;
+        double giftRecency = lastPlayerGiftDay < 0
+            ? 0d
+            : 1d - Math.Clamp((day - lastPlayerGiftDay) / 28d, 0d, 1d);
+        double hearts = Math.Clamp(candidate.VanillaHearts, 0, 14) / 14d;
+        double dormancy = candidate.LastProactiveDay < 0 || candidate.LastProactiveDay > day
+            ? 1d
+            : Math.Clamp(
+                (day - candidate.LastProactiveDay) / (double)options.ConversationLookbackDays,
+                0d,
+                1d);
+        double score = 0.10d + (giftRecency * 0.65d) + (hearts * 0.10d) + (dormancy * 0.15d);
+
+        var reasonTags = new List<string> { "controller_open_pool" };
+        if (lastPlayerGiftDay >= 0)
+            reasonTags.Add("recent_player_gift");
+        if (hearts >= 0.5d)
+            reasonTags.Add("established_relationship");
+        if (candidate.LastProactiveDay < 0)
+            reasonTags.Add("never_proactive");
+        else if (dormancy >= 0.5d)
+            reasonTags.Add("long_since_proactive");
+
+        return new SocialCandidateEvaluation
+        {
+            NpcName = npcName,
+            IsEligible = true,
+            Score = SocialModelNormalization.ClampFinite(score, 0d, 1d),
+            LastPlayerGiftDay = lastPlayerGiftDay,
             ReasonTags = reasonTags,
         };
     }
@@ -326,6 +374,36 @@ public sealed class DailySocialPlanner
             remaining.RemoveAt(selectedIndex);
         }
 
+        return selected;
+    }
+
+    private static List<SocialCandidateEvaluation> SelectPrioritizingRecentPlayerGifts(
+        IReadOnlyCollection<SocialCandidateEvaluation> candidates,
+        int count,
+        DeterministicRandom random)
+    {
+        var selected = new List<SocialCandidateEvaluation>(Math.Min(count, candidates.Count));
+        foreach (IGrouping<int, SocialCandidateEvaluation> giftDayGroup in candidates
+                     .Where(candidate => candidate.LastPlayerGiftDay >= 0)
+                     .GroupBy(candidate => candidate.LastPlayerGiftDay)
+                     .OrderByDescending(group => group.Key))
+        {
+            int remainingCount = count - selected.Count;
+            if (remainingCount <= 0)
+                break;
+            selected.AddRange(SampleWithoutReplacement(giftDayGroup.ToArray(), remainingCount, random));
+        }
+
+        if (selected.Count >= count)
+            return selected;
+
+        var selectedNames = new HashSet<string>(
+            selected.Select(candidate => candidate.NpcName),
+            StringComparer.OrdinalIgnoreCase);
+        SocialCandidateEvaluation[] remaining = candidates
+            .Where(candidate => !selectedNames.Contains(candidate.NpcName))
+            .ToArray();
+        selected.AddRange(SampleWithoutReplacement(remaining, count - selected.Count, random));
         return selected;
     }
 

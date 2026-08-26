@@ -15,10 +15,12 @@ namespace VivantValley;
 public sealed partial class ModEntry
 {
     private const string SocialDirectorSaveDataKey = "npc-social-director-v1";
-    private const int SocialPlannerVersion = 2;
+    private const int SocialPlannerVersion = 4;
+    private const int ControllerDailySocialCandidates = 6;
+    private const double ControllerProactiveMailChance = 0.30d;
     private const int SocialMorningStartTime = 600;
-    private const int SocialEveningStartTime = 1800;
-    private const int SocialEncounterCutoffTime = 2400;
+    private const int SocialAfternoonStartTime = 1200;
+    private const int SocialEncounterCutoffTime = 1800;
     private const string GiftMailAssetName = "Data/mail";
 
     private readonly DailySocialPlanner dailySocialPlanner = new();
@@ -61,8 +63,8 @@ public sealed partial class ModEntry
         foreach (string issue in giftPolicyService.CatalogIssues)
             Monitor.Log($"社交礼物目录：{issue}", LogLevel.Warn);
         Monitor.Log(
-            $"社交导演已启用：每日候选 {config.DailyCandidateMin}-{config.DailyCandidateMax} 名，"
-            + "每人早晚各一次机会；每名 NPC 每日最多提出一份礼物，午夜后停止触发。",
+            $"社交导演已启用：键鼠模式每日候选 {config.DailyCandidateMin}-{config.DailyCandidateMax} 名，"
+            + $"手柄模式固定 {ControllerDailySocialCandidates} 名；每人早上、下午各一次机会。",
             LogLevel.Info);
     }
 
@@ -190,9 +192,11 @@ public sealed partial class ModEntry
         int day = Game1.Date.TotalDays;
         string playerId = GetPlayerId();
         PlayerSocialDirectorState player = socialStore.GetOrCreatePlayer(playerId);
-        if (DailySocialPlanner.IsCurrentPlan(player.TodayPlan, day, SocialPlannerVersion))
+        bool controllerMode = Game1.options.gamepadControls;
+        if (DailySocialPlanner.IsCurrentPlan(player.TodayPlan, day, SocialPlannerVersion)
+            && player.TodayPlan!.ControllerMode == controllerMode)
             return;
-        if (pendingSignalAnalyses.Any(pending => !pending.Task.IsCompleted))
+        if (!controllerMode && pendingSignalAnalyses.Any(pending => !pending.Task.IsCompleted))
         {
             Monitor.Log("正在等待上一天的对话信号分析完成，今日社交名单将稍后固定。", LogLevel.Debug);
             return;
@@ -201,21 +205,53 @@ public sealed partial class ModEntry
         var planningCandidates = new List<SocialPlanningCandidate>();
         if (config.EnableSocialDirector)
         {
-            foreach (NpcSocialState npcState in player.NpcStates.Values)
+            if (controllerMode)
             {
-                NPC? npc = Game1.getCharacterFromName(
-                    npcState.NpcName,
-                    mustBeVillager: false,
-                    includeEventActors: false);
-                planningCandidates.Add(SocialPlanningCandidate.FromState(
-                    npcState,
-                    npc is null ? 0 : Game1.player.getFriendshipHeartLevelForNPC(npc.Name),
-                    existsInSave: npc is not null,
-                    canSocialize: npc is not null && npc.CanSocialize && !npc.IsInvisible));
+                foreach (NPC npc in Game1.locations
+                             .SelectMany(location => location.characters.OfType<NPC>())
+                             .Where(candidate => candidate.IsVillager
+                                                 && !candidate.IsMonster
+                                                 && !string.IsNullOrWhiteSpace(candidate.Name))
+                             .GroupBy(candidate => candidate.Name, StringComparer.OrdinalIgnoreCase)
+                             .Select(group => group.First()))
+                {
+                    NpcSocialState npcState = player.GetOrCreateNpc(npc.Name);
+                    planningCandidates.Add(SocialPlanningCandidate.FromState(
+                        npcState,
+                        Game1.player.getFriendshipHeartLevelForNPC(npc.Name),
+                        existsInSave: true,
+                        canSocialize: npc.CanSocialize
+                                       && !npc.IsInvisible
+                                       && !npcCombatStateService.IsHospitalized(npc.Name)));
+                }
+            }
+            else
+            {
+                foreach (NpcSocialState npcState in player.NpcStates.Values)
+                {
+                    NPC? npc = Game1.getCharacterFromName(
+                        npcState.NpcName,
+                        mustBeVillager: false,
+                        includeEventActors: false);
+                    planningCandidates.Add(SocialPlanningCandidate.FromState(
+                        npcState,
+                        npc is null ? 0 : Game1.player.getFriendshipHeartLevelForNPC(npc.Name),
+                        existsInSave: npc is not null,
+                        canSocialize: npc is not null
+                                       && npc.CanSocialize
+                                       && !npc.IsInvisible
+                                       && !npcCombatStateService.IsHospitalized(npc.Name)));
+                }
             }
         }
 
         string saveId = Game1.uniqueIDForThisGame.ToString(CultureInfo.InvariantCulture);
+        int minimumCandidates = controllerMode
+            ? ControllerDailySocialCandidates
+            : config.DailyCandidateMin;
+        int maximumCandidates = controllerMode
+            ? ControllerDailySocialCandidates
+            : config.DailyCandidateMax;
         player.TodayPlan = dailySocialPlanner.CreatePlan(
             saveId,
             playerId,
@@ -224,16 +260,21 @@ public sealed partial class ModEntry
             new DailySocialPlannerOptions
             {
                 PlannerVersion = SocialPlannerVersion,
-                MinimumCandidates = config.DailyCandidateMin,
-                MaximumCandidates = config.DailyCandidateMax,
+                MinimumCandidates = minimumCandidates,
+                MaximumCandidates = maximumCandidates,
                 ConversationLookbackDays = config.ConversationLookbackDays,
                 MinimumPositiveScore = config.PositiveConversationThreshold,
+                RequireRecentPositiveConversation = !controllerMode,
+                PrioritizeRecentPlayerGifts = controllerMode,
+                ControllerMode = controllerMode,
             });
         socialDirty = true;
 
         Monitor.Log(
             player.TodayPlan.Candidates.Count == 0
-                ? "今天没有满足近期积极对话条件的主动相遇候选。"
+                ? controllerMode
+                    ? "今天没有可用的正常村民，无法建立手柄主动相遇名单。"
+                    : "今天没有满足近期积极对话条件的主动相遇候选。"
                 : $"今天的社交导演名单已固定：{string.Join(", ", player.TodayPlan.Candidates.Select(candidate => candidate.NpcName).Distinct(StringComparer.OrdinalIgnoreCase))}。",
             LogLevel.Debug);
         if (persistImmediately)
@@ -339,6 +380,7 @@ public sealed partial class ModEntry
                     gift.DisplayName,
                     gift.MatchedTags,
                     gift.DisplayHint)).ToArray(),
+                EncourageOptionalGift = plan.ControllerMode,
                 FallbackDialogue = "上次聊过以后，我还记着你说的那些。今天正好碰见，就想问问你最近还好吗？",
                 Model = config.Model,
                 ThinkingType = config.EnableThinking ? "enabled" : "disabled",
@@ -662,7 +704,12 @@ public sealed partial class ModEntry
                 npcState.RecordGift(gift.QualifiedItemId, Game1.Date.TotalDays);
         }
 
-        RecordSocialEncounterMemory(scene, outcome, gift);
+        long encounterTurn = RecordSocialEncounterMemory(scene, outcome, gift);
+        RecordControllerProactiveMailOpportunity(
+            scene,
+            outcome,
+            encounterTurn,
+            plan.ControllerMode);
         socialDirty = true;
         PersistSocial(force: true);
         PersistMemory(force: false);
@@ -672,7 +719,7 @@ public sealed partial class ModEntry
         return true;
     }
 
-    private void RecordSocialEncounterMemory(
+    private long RecordSocialEncounterMemory(
         QueuedSocialScene scene,
         SocialEncounterOutcome outcome,
         SocialGiftCandidate? gift)
@@ -711,6 +758,57 @@ public sealed partial class ModEntry
         memory.TotalTurns++;
         memory.LastDate = $"{Game1.Date} {Game1.timeOfDay}";
         memoryDirty = true;
+        return memory.TotalTurns;
+    }
+
+    private void RecordControllerProactiveMailOpportunity(
+        QueuedSocialScene scene,
+        SocialEncounterOutcome outcome,
+        long conversationTurn,
+        bool controllerMode)
+    {
+        if (!controllerMode
+            || outcome != SocialEncounterOutcome.TalkOnly
+            || conversationTurn <= 0)
+        {
+            return;
+        }
+
+        bool passedMailChance = PassesDeterministicChance(
+            $"{scene.PlayerId}\u001f{scene.TotalDays}\u001f{scene.NpcName.ToLowerInvariant()}\u001fcontroller-proactive-mail",
+            ControllerProactiveMailChance);
+        PlayerSocialDirectorState player = socialStore.GetOrCreatePlayer(scene.PlayerId);
+        player.ConversationJournal ??= new List<DailyConversationJournalEntry>();
+        player.ConversationJournal.RemoveAll(entry =>
+            entry.Day == scene.TotalDays
+            && entry.NpcName.Equals(scene.NpcName, StringComparison.OrdinalIgnoreCase)
+            && entry.ConversationTurn == conversationTurn);
+        var journalEntry = new DailyConversationJournalEntry
+        {
+            Day = scene.TotalDays,
+            NpcName = scene.NpcName,
+            NpcDisplayName = scene.NpcDisplayName,
+            ConversationTurn = conversationTurn,
+            PlayerExcerpt = "玩家在路上听完了你的主动交谈。",
+            NpcExcerpt = scene.Decision.Dialogue,
+            IsProactiveEncounter = true,
+            PassedMailChance = passedMailChance,
+        };
+        journalEntry.Normalize();
+        player.ConversationJournal.Add(journalEntry);
+        player.ConversationJournal = player.ConversationJournal
+            .OrderByDescending(entry => entry.Day)
+            .ThenByDescending(entry => entry.ConversationTurn)
+            .Take(PlayerSocialDirectorState.MaxConversationJournalEntries)
+            .OrderBy(entry => entry.Day)
+            .ThenBy(entry => entry.ConversationTurn)
+            .ToList();
+        socialDirty = true;
+        Monitor.Log(
+            passedMailChance
+                ? $"手柄主动相遇 {scene.NpcName} 通过 30% 次日礼物信件抽签。"
+                : $"手柄主动相遇 {scene.NpcName} 未通过 30% 次日礼物信件抽签。",
+            LogLevel.Debug);
     }
 
     private GiftPolicyContext CreateGiftPolicyContext(
@@ -916,7 +1014,7 @@ public sealed partial class ModEntry
             .ToArray();
         if (todayEntries.Length == 0)
         {
-            Monitor.Log("今天没有完成普通 AI 对话，不创建隔夜邮件计划。", LogLevel.Debug);
+            Monitor.Log("今天没有完成 AI 对话或手柄主动相遇，不创建隔夜邮件计划。", LogLevel.Debug);
             return;
         }
 
@@ -935,19 +1033,33 @@ public sealed partial class ModEntry
                 continue;
             }
 
+            DailyConversationJournalEntry[] groupedEntries = group
+                .OrderBy(entry => entry.ConversationTurn)
+                .ToArray();
+            DailyConversationJournalEntry[] manualEntries = groupedEntries
+                .Where(entry => !entry.IsProactiveEncounter)
+                .ToArray();
             ConversationSignal[] todaySignals = npcState.RecentSignals
                 .Where(signal => signal.Day == sourceDay
-                                 && group.Any(entry => entry.ConversationTurn == signal.ConversationTurn))
+                                 && manualEntries.Any(entry => entry.ConversationTurn == signal.ConversationTurn))
                 .ToArray();
-            if (!OvernightMailPlannerService.IsEligibleConversation(
+            bool manualConversationEligible = OvernightMailPlannerService.IsEligibleConversation(
                     todaySignals,
-                    config.PositiveConversationThreshold))
+                    config.PositiveConversationThreshold);
+            bool proactiveChancePassed = groupedEntries.Any(entry =>
+                entry.IsProactiveEncounter && entry.PassedMailChance);
+            if (!manualConversationEligible && !proactiveChancePassed)
             {
                 Monitor.Log(
-                    $"隔夜邮件跳过 {npcName}：当天对话信号不积极、温暖或关切。",
+                    $"隔夜邮件跳过 {npcName}：普通对话信号不满足条件，且手柄主动相遇未通过 30% 抽签。",
                     LogLevel.Debug);
                 continue;
             }
+            DailyConversationJournalEntry[] mailEntries = groupedEntries
+                .Where(entry => entry.IsProactiveEncounter
+                    ? entry.PassedMailChance
+                    : manualConversationEligible)
+                .ToArray();
 
             string actionId = CreateOvernightMailActionId(sourceDay, npcName);
             IReadOnlyList<string> relevantTags = BuildRelevantSocialTags(player, npcState);
@@ -976,14 +1088,14 @@ public sealed partial class ModEntry
 
             string transcript = string.Join(
                 "\n",
-                group.Select(entry =>
+                mailEntries.Select(entry =>
                     $"玩家：{LimitSocialPromptText(entry.PlayerExcerpt, 500)}\n"
                     + $"{entry.NpcDisplayName}：{LimitSocialPromptText(entry.NpcExcerpt, 700)}"));
             var snapshot = new OvernightMailNpcSnapshot
             {
                 ActionId = actionId,
                 NpcName = npcName,
-                NpcDisplayName = group.Last().NpcDisplayName,
+                NpcDisplayName = mailEntries[^1].NpcDisplayName,
                 GameContext = BuildNpcGameSnapshot(npc, GetPlayerId()).SystemPrompt,
                 ConversationExcerpt = transcript,
                 SignalSummary = BuildOvernightSignalSummary(todaySignals),
@@ -1371,14 +1483,6 @@ public sealed partial class ModEntry
     private void OnMenuChanged(object? sender, MenuChangedEventArgs e)
     {
         TrackVanillaMenuChanged(e);
-        if (e.OldMenu is AiChatInputMenu && !ReferenceEquals(e.OldMenu, e.NewMenu))
-        {
-            ConversationScreenState state = screenStates.Value;
-            state.KeyboardSpacePressed = false;
-            state.KeyboardSpaceLongTriggered = false;
-            state.KeyboardSpaceElapsedTicks = 0;
-            CancelVoiceRecording(screenStates.Value);
-        }
 
         if (!Context.IsWorldReady || !Context.IsMainPlayer)
         {
@@ -1520,6 +1624,23 @@ public sealed partial class ModEntry
         return SocialModelNormalization.LimitSingleLine(
             $"overnight-mail-{day}-{normalizedNpc}",
             128);
+    }
+
+    private static bool PassesDeterministicChance(string key, double probability)
+    {
+        probability = Math.Clamp(probability, 0d, 1d);
+        if (probability <= 0d)
+            return false;
+        if (probability >= 1d)
+            return true;
+
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(key ?? string.Empty));
+        uint sample = ((uint)hash[0] << 24)
+                      | ((uint)hash[1] << 16)
+                      | ((uint)hash[2] << 8)
+                      | hash[3];
+        double roll = sample / ((double)uint.MaxValue + 1d);
+        return roll < probability;
     }
 
     private static string BuildOvernightSignalSummary(IEnumerable<ConversationSignal> signals)
@@ -2083,14 +2204,14 @@ public sealed partial class ModEntry
     private static bool TryGetActiveSocialTimeSlot(out DailySocialTimeSlot timeSlot)
     {
         int time = Game1.timeOfDay;
-        if (time >= SocialMorningStartTime && time < SocialEveningStartTime)
+        if (time >= SocialMorningStartTime && time < SocialAfternoonStartTime)
         {
             timeSlot = DailySocialTimeSlot.Morning;
             return true;
         }
-        if (time >= SocialEveningStartTime && time < SocialEncounterCutoffTime)
+        if (time >= SocialAfternoonStartTime && time < SocialEncounterCutoffTime)
         {
-            timeSlot = DailySocialTimeSlot.Evening;
+            timeSlot = DailySocialTimeSlot.Afternoon;
             return true;
         }
 
@@ -2104,8 +2225,8 @@ public sealed partial class ModEntry
     private static bool IsSocialTimeSlotPast(DailySocialTimeSlot timeSlot)
         => timeSlot switch
         {
-            DailySocialTimeSlot.Morning => Game1.timeOfDay >= SocialEveningStartTime,
-            DailySocialTimeSlot.Evening => Game1.timeOfDay >= SocialEncounterCutoffTime,
+            DailySocialTimeSlot.Morning => Game1.timeOfDay >= SocialAfternoonStartTime,
+            DailySocialTimeSlot.Afternoon => Game1.timeOfDay >= SocialEncounterCutoffTime,
             _ => true,
         };
 

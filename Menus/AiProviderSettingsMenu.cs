@@ -203,12 +203,7 @@ public sealed class AiProviderSettingsMenu : IClickableMenu
 
     public override void receiveGamePadButton(Buttons button)
     {
-        if (button == Buttons.B)
-        {
-            Cancel();
-            return;
-        }
-        base.receiveGamePadButton(button);
+        // Controller input is intentionally ignored by the mod.
     }
 
     public override void performHoverAction(int x, int y)

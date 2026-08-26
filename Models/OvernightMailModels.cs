@@ -17,6 +17,12 @@ public sealed class DailyConversationJournalEntry
 
     public string NpcExcerpt { get; set; } = string.Empty;
 
+    /// <summary>True for a controller-mode NPC-initiated encounter rather than a manual AI chat.</summary>
+    public bool IsProactiveEncounter { get; set; }
+
+    /// <summary>Persisted result of the controller proactive-mail probability roll.</summary>
+    public bool PassedMailChance { get; set; }
+
     public void Normalize()
     {
         Day = Math.Max(-1, Day);

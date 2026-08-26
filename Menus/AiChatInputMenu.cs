@@ -18,13 +18,11 @@ public sealed class AiChatInputMenu : IClickableMenu
     private readonly Action<string> onSubmit;
     private readonly Action onCancel;
     private readonly Action onOpenSettings;
-    private readonly TextBox textBox;
+    private readonly CaretTextBox textBox;
     private readonly ClickableComponent sendButton = new(Rectangle.Empty, "send");
     private readonly ClickableComponent settingsButton = new(Rectangle.Empty, "settings");
     private bool closed;
     private bool submitDispatched;
-    private bool keyboardSpaceGestureActive;
-    private string voiceStatus = string.Empty;
 
     public AiChatInputMenu(
         string npcDisplayName,
@@ -40,17 +38,14 @@ public sealed class AiChatInputMenu : IClickableMenu
         this.onOpenSettings = onOpenSettings;
 
         Texture2D textBoxTexture = Game1.content.Load<Texture2D>("LooseSprites\\textBox");
-        textBox = new TextBox(textBoxTexture, null, Game1.smallFont, Game1.textColor)
+        textBox = new CaretTextBox(textBoxTexture, Game1.smallFont, Game1.textColor, textLimit: 800)
         {
-            textLimit = 800,
-            limitWidth = true,
             Selected = true,
-            TitleText = string.Empty,
         };
 
         // Use the same keyboard-dispatcher path as Stardew's NamingMenu. This keeps
         // Enter reliable without treating an IME candidate-confirm key as a submit.
-        textBox.OnEnterPressed += _ => Submit();
+        textBox.EnterPressed += Submit;
 
         Reposition();
         Game1.keyboardDispatcher.Subscriber = textBox;
@@ -82,9 +77,9 @@ public sealed class AiChatInputMenu : IClickableMenu
             return;
         }
 
-        if (new Rectangle(textBox.X, textBox.Y, textBox.Width, textBox.Height).Contains(x, y))
+        if (textBox.Bounds.Contains(x, y))
         {
-            textBox.SelectMe();
+            textBox.SelectAt(x);
             Game1.keyboardDispatcher.Subscriber = textBox;
         }
     }
@@ -97,9 +92,6 @@ public sealed class AiChatInputMenu : IClickableMenu
             return;
         }
 
-        if (key == Keys.Space && keyboardSpaceGestureActive)
-            return;
-
         // TextBox receives typing, Enter, and IME composition through
         // Game1.keyboardDispatcher. Avoid processing the same physical key twice.
         if (!textBox.Selected)
@@ -108,110 +100,7 @@ public sealed class AiChatInputMenu : IClickableMenu
 
     public override void receiveGamePadButton(Buttons button)
     {
-        if (button == Buttons.A)
-        {
-            Submit();
-            return;
-        }
-
-        if (button == Buttons.B)
-        {
-            Cancel();
-            return;
-        }
-
-        base.receiveGamePadButton(button);
-    }
-
-    /// <summary>Remove the last character when the controller B button is tapped.</summary>
-    public void DeleteLastCharacter()
-    {
-        if (closed)
-            return;
-
-        string value = textBox.Text ?? string.Empty;
-        if (value.Length == 0)
-        {
-            Game1.playSound("cancel");
-            return;
-        }
-
-        textBox.Text = value[..^1];
-        textBox.SelectMe();
-        Game1.keyboardDispatcher.Subscriber = textBox;
-        Game1.playSound("smallSelect");
-    }
-
-    /// <summary>Submit the text currently in the composer from a short controller A press.</summary>
-    public void SubmitControllerText() => Submit();
-
-    /// <summary>Pause TextBox character repeat while keyboard space is being classified.</summary>
-    public void BeginKeyboardSpaceGesture()
-    {
-        if (closed)
-            return;
-
-        keyboardSpaceGestureActive = true;
-        textBox.Selected = false;
-        if (ReferenceEquals(Game1.keyboardDispatcher.Subscriber, textBox))
-            Game1.keyboardDispatcher.Subscriber = null;
-    }
-
-    /// <summary>End keyboard-space classification and restore normal typing.</summary>
-    public void EndKeyboardSpaceGesture(bool restoreFocus = true)
-    {
-        keyboardSpaceGestureActive = false;
-        if (restoreFocus && !closed)
-        {
-            textBox.SelectMe();
-            Game1.keyboardDispatcher.Subscriber = textBox;
-        }
-    }
-
-    /// <summary>Restore a suppressed short keyboard-space press to the composer.</summary>
-    public void AppendSpace()
-    {
-        if (closed)
-            return;
-
-        EndKeyboardSpaceGesture(restoreFocus: false);
-        string value = textBox.Text ?? string.Empty;
-        if (value.Length >= textBox.textLimit)
-            return;
-
-        textBox.Text = value + " ";
-        textBox.SelectMe();
-        Game1.keyboardDispatcher.Subscriber = textBox;
-    }
-
-    /// <summary>Submit a completed speech transcription through the normal conversation callback.</summary>
-    public void SubmitRecognizedText(string value)
-    {
-        if (closed)
-            return;
-
-        string normalized = (value ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim();
-        if (normalized.Length == 0)
-        {
-            SetVoiceError("未识别到语音。");
-            return;
-        }
-
-        textBox.Text = normalized;
-        EndKeyboardSpaceGesture(restoreFocus: false);
-        Submit();
-    }
-
-    public void SetVoiceRecordingState() => voiceStatus = "正在录音...松开按键发送";
-
-    public void SetVoiceProcessingState() => voiceStatus = "正在识别语音...";
-
-    public void SetVoiceError(string message)
-    {
-        voiceStatus = string.IsNullOrWhiteSpace(message) ? "语音输入不可用。" : message.Trim();
-        textBox.SelectMe();
-        Game1.keyboardDispatcher.Subscriber = textBox;
-        Game1.playSound("cancel");
+        // Controller input is intentionally ignored by the mod.
     }
 
     public override void performHoverAction(int x, int y)
@@ -242,16 +131,7 @@ public sealed class AiChatInputMenu : IClickableMenu
             new Vector2(xPositionOnScreen + width - 76 - hintSize.X, yPositionOnScreen + 18),
             Color.Gray);
 
-        if (!string.IsNullOrWhiteSpace(voiceStatus))
-        {
-            b.DrawString(
-                Game1.smallFont,
-                voiceStatus,
-                new Vector2(xPositionOnScreen + 24, yPositionOnScreen + 48),
-                Color.DarkSlateGray);
-        }
-
-        textBox.Draw(b, drawShadow: false);
+        textBox.Draw(b);
         DrawSendButton(b);
         DrawSettingsButton(b);
         upperRightCloseButton?.draw(b);

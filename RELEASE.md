@@ -4,7 +4,7 @@
 
 ## 发布文件
 
-正式附件名称：
+当前 Windows 发布附件名称：
 
 ```text
 VivantValley-Release.zip
@@ -17,6 +17,9 @@ VivantValley/
   manifest.json
   VivantValley.dll
   VivantValley.pdb
+  backend/
+    win-x64/
+      VivantValley.LangGraph.exe
   assets/
     social/
       gift-pools.json
@@ -26,7 +29,7 @@ VivantValley/
 
 ## 发布说明
 
-**Vivant Valley** 让星露谷村民记住与玩家的长期交流，并根据当前存档事实、近期活动和彼此关系自然回应。村民可以在原版日程中主动搭话，通过经过代码验证的白名单送出有意义的当面礼物，也可能在一次温暖的交谈后于次日寄来惊喜邮件。
+**Vivant Valley** 让星露谷村民记住与玩家的长期交流，并根据当前存档事实、近期活动和彼此关系自然回应。村民可以在原版日程中主动搭话，通过经过代码验证的白名单送出有意义的当面礼物，也可能在一次温暖的交谈后于次日寄来惊喜邮件。发布包内置后端，玩家不需要安装 Python。
 
 0.13.0 是原 **Stardew AI Memories** 的正式改名版本。现有用户的存档记忆保持兼容，但升级时必须移除旧安装目录，只保留新的 `Mods/VivantValley`，并将旧 `config.json` 复制到新目录。
 
@@ -34,8 +37,9 @@ VivantValley/
 
 ```powershell
 dotnet build .\VivantValley.csproj -c Release
-dotnet run --project .\tests\ConversationEngineSmoke\ConversationEngineSmoke.csproj -c Release
-.\scripts\package.ps1 -Configuration Release
+  dotnet run --project .\tests\ConversationEngineSmoke\ConversationEngineSmoke.csproj -c Release
+  .\scripts\build-langgraph-backend.ps1
+  .\scripts\package.ps1 -Configuration Release
 ```
 
 检查压缩包：
@@ -80,4 +84,5 @@ dotnet run --project .\tests\ConversationEngineSmoke\ConversationEngineSmoke.csp
 
 - 主动社交、礼物、邮件和长期持久化只由主玩家执行。
 - AI 服务需要联网，速度、可用性和费用取决于第三方提供商。
+- 当前 ZIP 内置 Windows x64 后端。完整跨平台发布需要把 CI 生成的 `osx-x64` 与 `osx-arm64` 目录合并进同一个 ZIP；macOS 二进制必须在目标 Mac 上签名和 notarize。
 - 模型仍可能生成不理想的角色表达；涉及礼物的物品和结果由代码额外约束，但普通文本不能完全确定化。

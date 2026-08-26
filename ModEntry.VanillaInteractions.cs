@@ -166,6 +166,13 @@ public sealed partial class ModEntry
             npc.Name,
             item.QualifiedItemId,
             item.DisplayName);
+
+        PlayerSocialDirectorState player = socialStore.GetOrCreatePlayer(GetPlayerId());
+        NpcSocialState socialState = player.GetOrCreateNpc(npc.Name);
+        socialState.LastPlayerGiftDay = Math.Max(socialState.LastPlayerGiftDay, Game1.Date.TotalDays);
+        socialDirty = true;
+        PersistSocial(force: false);
+
         if (Game1.CurrentEvent is not null)
         {
             AddVanillaEventBeat(new NarrativeBeat

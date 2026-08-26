@@ -13,6 +13,7 @@ $outputDirectory = Join-Path $projectRoot "bin\$Configuration\net6.0"
 $distRoot = Join-Path $projectRoot "dist"
 $packageDirectory = Join-Path $distRoot "VivantValley"
 $zipPath = Join-Path $distRoot "VivantValley-$Configuration.zip"
+$backendArtifacts = Join-Path $projectRoot "artifacts\backend"
 
 $buildArguments = @("build", $projectFile, "-c", $Configuration)
 if (-not [string]::IsNullOrWhiteSpace($GamePath)) {
@@ -67,6 +68,18 @@ if (Test-Path -LiteralPath $storyAssetsPath) {
     $packageAssetsPath = Join-Path $packageDirectory "assets"
     New-Item -ItemType Directory -Path $packageAssetsPath -Force | Out-Null
     Copy-Item -LiteralPath $storyAssetsPath -Destination $packageAssetsPath -Recurse
+}
+
+if (Test-Path -LiteralPath $backendArtifacts) {
+    $packageBackendPath = Join-Path $packageDirectory "backend"
+    Copy-Item -LiteralPath $backendArtifacts -Destination $packageBackendPath -Recurse -Force
+}
+
+$backendReadme = Join-Path $projectRoot "backend\README.md"
+if (Test-Path -LiteralPath $backendReadme) {
+    $packageBackendPath = Join-Path $packageDirectory "backend"
+    New-Item -ItemType Directory -Path $packageBackendPath -Force | Out-Null
+    Copy-Item -LiteralPath $backendReadme -Destination $packageBackendPath -Force
 }
 
 if (Test-Path -LiteralPath $zipPath) {

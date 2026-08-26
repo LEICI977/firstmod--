@@ -196,36 +196,7 @@ public sealed class AiStreamingDialogueMenu : IClickableMenu
 
     public override void receiveGamePadButton(Buttons button)
     {
-        if (button == Buttons.B)
-        {
-            if (IsAwaitingMoveConfirmation)
-            {
-                ResolveMoveConfirmation(approved: false);
-                return;
-            }
-            Close(cancelRequest: IsGenerating);
-            return;
-        }
-
-        if (IsAwaitingMoveConfirmation && button == Buttons.A)
-        {
-            ResolveMoveConfirmation(approved: true);
-            return;
-        }
-
-        if (CanContinue && button == Buttons.A)
-        {
-            ContinueConversation();
-            return;
-        }
-
-        if (!IsGenerating && button == Buttons.A)
-        {
-            Close(cancelRequest: false);
-            return;
-        }
-
-        base.receiveGamePadButton(button);
+        // Controller input is intentionally ignored by the mod.
     }
 
     public override void receiveLeftClick(int x, int y, bool playSound = true)

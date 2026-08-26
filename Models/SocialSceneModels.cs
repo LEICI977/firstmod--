@@ -32,6 +32,8 @@ public sealed class AiSocialSceneRequest
     public IReadOnlyList<SocialSceneGiftOption> GiftCandidates { get; init; }
         = Array.Empty<SocialSceneGiftOption>();
 
+    public bool EncourageOptionalGift { get; init; }
+
     public string FallbackDialogue { get; init; } = string.Empty;
 
     public string Model { get; init; } = "deepseek-v4-flash";

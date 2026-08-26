@@ -9,3 +9,6 @@ config.json
 .langgraph-venv/
 langgraph_service/__pycache__/
 __pycache__/
+artifacts/
+backend-build-*/
+backend-build-current/

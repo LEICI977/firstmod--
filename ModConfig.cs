@@ -41,6 +41,15 @@ public sealed class ModConfig
     /// <summary>Local LangGraph service endpoint used for structured conversation decisions.</summary>
     public string LangGraphBaseUrl { get; set; } = "http://127.0.0.1:8123";
 
+    /// <summary>Start the platform-specific LangGraph executable shipped inside the mod.</summary>
+    public bool UseBundledLangGraph { get; set; } = true;
+
+    /// <summary>Preferred bundled backend port; zero chooses a free loopback port.</summary>
+    public int BundledLangGraphPort { get; set; }
+
+    /// <summary>Maximum time spent asynchronously checking that the bundled backend is ready.</summary>
+    public int BundledLangGraphStartupTimeoutSeconds { get; set; } = 30;
+
     /// <summary>HTTP timeout for one LangGraph graph request.</summary>
     public int LangGraphTimeoutSeconds { get; set; } = 240;
 
@@ -92,7 +101,7 @@ public sealed class ModConfig
     /// <summary>Maximum number of NPCs sampled for a daily plan.</summary>
     public int DailyCandidateMax { get; set; } = 5;
 
-    /// <summary>Legacy setting retained for existing config files. Every selected morning/evening opportunity is now allowed.</summary>
+    /// <summary>Legacy setting retained for existing config files. Every selected morning/afternoon opportunity is now allowed.</summary>
     public int DailyEncounterLimit { get; set; } = 10;
 
     /// <summary>How many in-game days a positive AI conversation remains eligible.</summary>

@@ -7,6 +7,7 @@ using System.Text.Json;
 TestConversationActionIntentPolicy();
 TestConversationMemoryPolicy();
 TestConversationSessionMemoryStore();
+TestSingleLineTextBuffer();
 await TestGameBridgeDynamicPortsAsync();
 if (args.Contains("--game-bridge-only", StringComparer.OrdinalIgnoreCase))
 {
@@ -171,6 +172,27 @@ static void TestConversationSessionMemoryStore()
     store.EndMove("player-1", "Haley", destination);
     Assert(store.BuildPromptFacts("player-1", "Haley", 8).Count == 0,
         "Cancelled travel left a false temporary destination fact.");
+}
+
+static void TestSingleLineTextBuffer()
+{
+    var buffer = new SingleLineTextBuffer(maximumLength: 20);
+    Assert(buffer.Insert("你好世界"), "Text buffer rejected normal Chinese input.");
+    Assert(buffer.MoveLeft() && buffer.MoveLeft(), "Text buffer couldn't move the caret left.");
+    Assert(buffer.Insert("美丽"), "Text buffer couldn't insert at the caret.");
+    Assert(buffer.Text == "你好美丽世界", "Text was appended instead of inserted at the caret.");
+
+    Assert(buffer.Backspace() && buffer.Text == "你好美世界", "Backspace didn't remove the previous text element.");
+    Assert(buffer.Delete() && buffer.Text == "你好美界", "Delete didn't remove the next text element.");
+
+    buffer.Text = "甲🙂乙";
+    buffer.MoveLeft();
+    Assert(buffer.Backspace() && buffer.Text == "甲乙", "Backspace split or retained a surrogate-pair character.");
+    buffer.MoveHome();
+    Assert(buffer.Insert("春\r\n天") && buffer.Text == "春 天甲乙", "Pasted line breaks weren't normalized safely.");
+
+    var limited = new SingleLineTextBuffer(maximumLength: 3);
+    Assert(limited.Insert("A🙂B") && limited.Text == "A🙂", "Length limiting split a complete text element.");
 }
 
 static void TestConversationActionIntentPolicy()
@@ -1274,11 +1296,71 @@ static void TestDailySocialPlannerDeterminism()
     Assert(
         first.Candidates.GroupBy(candidate => candidate.NpcName, StringComparer.OrdinalIgnoreCase)
             .All(group => group.Select(candidate => candidate.TimeSlot).Distinct().Count() == 2),
-        "A selected NPC didn't receive one morning and one evening opportunity.");
+        "A selected NPC didn't receive one morning and one afternoon opportunity.");
     Assert(
         first.Candidates.Select(candidate => candidate.ActionId).Distinct(StringComparer.Ordinal).Count()
         == first.Candidates.Count,
         "Daily candidates didn't receive unique deterministic action IDs.");
+
+    SocialPlanningCandidate[] controllerCandidates = Enumerable.Range(1, 8)
+        .Select(index => new SocialPlanningCandidate
+        {
+            NpcName = $"ControllerNpc{index}",
+            VanillaHearts = index,
+            LastConversationDay = -1,
+            LastProactiveDay = -1,
+            RecentSignals = new List<ConversationSignal>(),
+        })
+        .ToArray();
+    controllerCandidates[6].LastPlayerGiftDay = 99;
+    controllerCandidates[7].LastPlayerGiftDay = 100;
+    DailySocialPlan controllerPlan = planner.CreatePlan(
+        "save-1",
+        "player-1",
+        100,
+        controllerCandidates,
+        new DailySocialPlannerOptions
+        {
+            PlannerVersion = 4,
+            MinimumCandidates = 6,
+            MaximumCandidates = 6,
+            RequireRecentPositiveConversation = false,
+            PrioritizeRecentPlayerGifts = true,
+            ControllerMode = true,
+        });
+    string[] controllerNpcNames = controllerPlan.Candidates
+        .Select(candidate => candidate.NpcName)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    Assert(
+        controllerNpcNames.Length == 6
+        && controllerPlan.Candidates.Count == 12
+        && controllerPlan.Candidates.Count(candidate => candidate.TimeSlot == DailySocialTimeSlot.Morning) == 6
+        && controllerPlan.Candidates.Count(candidate => candidate.TimeSlot == DailySocialTimeSlot.Afternoon) == 6,
+        "Controller-mode planning didn't create six morning and six afternoon opportunities.");
+    Assert(
+        controllerPlan.ControllerMode
+        && controllerNpcNames.Contains("ControllerNpc7", StringComparer.OrdinalIgnoreCase)
+        && controllerNpcNames.Contains("ControllerNpc8", StringComparer.OrdinalIgnoreCase),
+        "Controller-mode planning didn't prioritize NPCs who recently received player gifts.");
+
+    DailySocialPlan smallControllerPlan = planner.CreatePlan(
+        "save-1",
+        "player-1",
+        100,
+        controllerCandidates.Take(4),
+        new DailySocialPlannerOptions
+        {
+            PlannerVersion = 4,
+            MinimumCandidates = 6,
+            MaximumCandidates = 6,
+            RequireRecentPositiveConversation = false,
+            ControllerMode = true,
+        });
+    Assert(
+        smallControllerPlan.Candidates.Count == 8
+        && smallControllerPlan.Candidates.Select(candidate => candidate.NpcName).Distinct().Count() == 4,
+        "Controller-mode planning duplicated NPCs when fewer than six were available.");
 
     DailySocialPlan nextDay = planner.CreatePlan("save-1", "player-1", 101, candidates);
     DailySocialPlan otherPlayer = planner.CreatePlan("save-1", "player-2", 100, candidates);
@@ -1306,6 +1388,19 @@ static void TestDailySocialPlannerEligibility()
         recentlyProactive.IsEligible,
         "Yesterday's proactive encounter incorrectly blocked today's selection.");
     Assert(positive.IsEligible && positive.Score > 0d, "A recent positive conversation wasn't eligible.");
+    SocialCandidateEvaluation neverConversed = planner.EvaluateCandidate(
+        new SocialPlanningCandidate { NpcName = "NeverConversed", LastConversationDay = -1 },
+        day: 100);
+    SocialCandidateEvaluation controllerNeverConversed = planner.EvaluateCandidate(
+        new SocialPlanningCandidate { NpcName = "ControllerNeverConversed", LastConversationDay = -1 },
+        day: 100,
+        new DailySocialPlannerOptions { RequireRecentPositiveConversation = false });
+    Assert(
+        !neverConversed.IsEligible && neverConversed.ExclusionReason == "never_conversed",
+        "Normal planning stopped requiring conversation history.");
+    Assert(
+        controllerNeverConversed.IsEligible,
+        "Controller open-pool planning still required conversation history.");
 
     DailySocialPlan plan = planner.CreatePlan(
         "save-1",
@@ -1319,7 +1414,7 @@ static void TestDailySocialPlannerEligibility()
     Assert(
         plan.Candidates.Count == 2
         && plan.Candidates.All(candidate => candidate.NpcName == "RecentlyProactive"),
-        "A recent proactive encounter should still produce morning/evening opportunities.");
+        "A recent proactive encounter should still produce morning/afternoon opportunities.");
 }
 
 static SocialPlanningCandidate CreateSocialCandidate(string npcName, double valence, int lastProactiveDay)
@@ -1426,6 +1521,7 @@ static async Task TestAiSocialSceneContractAsync()
         {
             new SocialSceneGiftOption("mining_quartz", "Quartz", new[] { "mining" }),
         },
+        EncourageOptionalGift = true,
         FallbackDialogue = "I just wanted to see how you were doing.",
     };
 
@@ -1437,6 +1533,9 @@ static async Task TestAiSocialSceneContractAsync()
     Assert(
         !client.Requests[0].Messages.Any(message => message.Content.Contains("(O)", StringComparison.Ordinal)),
         "The AI scene prompt exposed a qualified item ID.");
+    Assert(
+        client.Requests[0].Messages.Any(message => message.Content.Contains("仍由角色本人决定", StringComparison.Ordinal)),
+        "Controller proactive scenes didn't preserve optional NPC-controlled gift behavior.");
 
     AiSocialSceneDecision fenced = await service.GenerateAsync("test-key", request);
     Assert(
@@ -1770,6 +1869,8 @@ static void TestOvernightMailPersistenceModel()
                 ConversationTurn = 4,
                 PlayerExcerpt = "newer duplicate",
                 NpcExcerpt = "newer duplicate",
+                IsProactiveEncounter = true,
+                PassedMailChance = true,
             },
         },
         PendingOvernightMailPlan = new OvernightMailPlanSnapshot
@@ -1795,6 +1896,10 @@ static void TestOvernightMailPersistenceModel()
 
     player.Normalize("1");
     Assert(player.ConversationJournal.Count == 1, "Duplicate daily conversation journal entries weren't normalized.");
+    Assert(
+        player.ConversationJournal[0].IsProactiveEncounter
+        && player.ConversationJournal[0].PassedMailChance,
+        "Controller proactive-mail chance state wasn't preserved during normalization.");
     Assert(player.PendingOvernightMailPlan is not null, "A valid pending overnight plan wasn't preserved.");
     Assert(
         player.PendingOvernightMailPlan!.DeliverOnOrAfterDay == 11

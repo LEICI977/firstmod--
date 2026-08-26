@@ -366,7 +366,7 @@ public enum DailySocialCandidateStatus
 public enum DailySocialTimeSlot
 {
     Morning,
-    Evening,
+    Afternoon,
 }
 
 /// <summary>A deterministic set of NPC opportunities persisted for one game day.</summary>
@@ -378,6 +378,8 @@ public sealed class DailySocialPlan
 
     /// <summary>Lower-case hexadecimal SHA-256 digest used to initialize the planner RNG.</summary>
     public string Seed { get; set; } = string.Empty;
+
+    public bool ControllerMode { get; set; }
 
     public int TriggeredCount { get; set; }
 
@@ -493,6 +495,9 @@ public sealed class NpcSocialState
 
     public int LastGiftDay { get; set; } = -1;
 
+    /// <summary>Most recent day on which the player gave this NPC a vanilla gift.</summary>
+    public int LastPlayerGiftDay { get; set; } = -1;
+
     public List<NpcGiftHistoryEntry> RecentGifts { get; set; } = new();
 
     /// <summary>Idempotency ledger. This is deliberately not truncated during normalization.</summary>
@@ -505,6 +510,7 @@ public sealed class NpcSocialState
         LastProactiveDay = Math.Max(-1, LastProactiveDay);
         LastGiftOfferDay = Math.Max(-1, LastGiftOfferDay);
         LastGiftDay = Math.Max(-1, LastGiftDay);
+        LastPlayerGiftDay = Math.Max(-1, LastPlayerGiftDay);
 
         RecentSignals = (RecentSignals ?? new List<ConversationSignal>())
             .Where(signal => signal is not null)
@@ -554,6 +560,7 @@ public sealed class NpcSocialState
         LastProactiveDay = Math.Max(LastProactiveDay, other.LastProactiveDay);
         LastGiftOfferDay = Math.Max(LastGiftOfferDay, other.LastGiftOfferDay);
         LastGiftDay = Math.Max(LastGiftDay, other.LastGiftDay);
+        LastPlayerGiftDay = Math.Max(LastPlayerGiftDay, other.LastPlayerGiftDay);
         RecentSignals.AddRange(other.RecentSignals ?? new List<ConversationSignal>());
         RecentGifts.AddRange(other.RecentGifts ?? new List<NpcGiftHistoryEntry>());
         CompletedActionIds.UnionWith(other.CompletedActionIds ?? new HashSet<string>());
@@ -727,6 +734,8 @@ public sealed class SocialPlanningCandidate
 
     public int LastProactiveDay { get; set; } = -1;
 
+    public int LastPlayerGiftDay { get; set; } = -1;
+
     public List<ConversationSignal> RecentSignals { get; set; } = new();
 
     public static SocialPlanningCandidate FromState(
@@ -748,6 +757,7 @@ public sealed class SocialPlanningCandidate
             VanillaHearts = vanillaHearts,
             LastConversationDay = state.LastConversationDay,
             LastProactiveDay = state.LastProactiveDay,
+            LastPlayerGiftDay = state.LastPlayerGiftDay,
             RecentSignals = (state.RecentSignals ?? new List<ConversationSignal>())
                 .Where(signal => signal is not null)
                 .Select(signal => signal.CloneNormalized())
@@ -765,6 +775,8 @@ public sealed class SocialCandidateEvaluation
     public string ExclusionReason { get; init; } = string.Empty;
 
     public double Score { get; init; }
+
+    public int LastPlayerGiftDay { get; init; } = -1;
 
     public IReadOnlyList<string> ReasonTags { get; init; } = Array.Empty<string>();
 }
@@ -798,6 +810,13 @@ public sealed class DailySocialPlannerOptions
 
     public double DormancyWeight { get; set; } = 0.15d;
 
+    /// <summary>False for controller mode, where manual AI chat history isn't available.</summary>
+    public bool RequireRecentPositiveConversation { get; set; } = true;
+
+    public bool PrioritizeRecentPlayerGifts { get; set; }
+
+    public bool ControllerMode { get; set; }
+
     public DailySocialPlannerOptions Normalize()
     {
         var normalized = new DailySocialPlannerOptions
@@ -817,6 +836,9 @@ public sealed class DailySocialPlannerOptions
             ConcernWeight = SocialModelNormalization.ClampFinite(ConcernWeight, 0d, 100d),
             HeartsWeight = SocialModelNormalization.ClampFinite(HeartsWeight, 0d, 100d),
             DormancyWeight = SocialModelNormalization.ClampFinite(DormancyWeight, 0d, 100d),
+            RequireRecentPositiveConversation = RequireRecentPositiveConversation,
+            PrioritizeRecentPlayerGifts = PrioritizeRecentPlayerGifts,
+            ControllerMode = ControllerMode,
         };
 
         if (normalized.MaximumCandidates < normalized.MinimumCandidates)

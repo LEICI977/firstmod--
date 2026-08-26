@@ -2,6 +2,8 @@
 
 Vivant Valley 是一个面向 Stardew Valley 1.6 的 SMAPI 模组。它让村民基于当前存档状态、近期对话和长期共同记忆自然交流，并在合适的时机主动搭话或送出经过游戏代码验证的礼物。
 
+正式发布包内置平台对应的 LangGraph 后端，安装 Mod 后会自动在本机回环地址启动；玩家不需要安装 Python、pip 或虚拟环境。
+
 当前版本：`0.13.0`
 
 ## 核心功能
@@ -94,7 +96,7 @@ AI 对话是独立聊天渠道，不替代原版每日交谈，也不会直接�
 
 ## 主动社交
 
-每天首次载入后，社交导演会根据近期对话的积极程度、温暖度、关心度、未完话题、关系和相遇多样性选择 `3-5` 名候选。每名候选有早间与晚间两个独立机会，错过时段后不会追赶或顺延。
+每天首次载入后，社交导演会根据近期对话的积极程度、温暖度、关心度、未完话题、关系和相遇多样性选择候选。键鼠模式沿用 `3-5` 名；检测到游戏手柄模式时提高到最多 `6` 名。每名候选有早上与下午两个独立机会，错过时段后不会追赶或顺延。
 
 玩家活动只保存按天汇总的地点类别、物品类别、技能变化和活跃时段等有限信息，不记录坐标、物品 ID 或完整事件流。默认保留 7 天。
 
@@ -130,7 +132,7 @@ SMAPI 首次运行后会在模组目录生成 `config.json`。
 | `SummaryTriggerMessages` | `24` | 触发长期摘要的消息数量 |
 | `SummaryKeepRecentMessages` | `8` | 摘要后保留的近期消息数量 |
 | `EnableSocialDirector` | `true` | 是否启用每日主动社交 |
-| `DailyCandidateMin` / `DailyCandidateMax` | `3` / `5` | 每日社交候选数量 |
+| `DailyCandidateMin` / `DailyCandidateMax` | `3` / `5` | 键鼠模式每日社交候选数量；手柄模式固定尝试选择 6 名 |
 | `SocialActivationDistanceTiles` | `7` | 主动相遇触发距离 |
 | `EnableConversationSignalAnalysis` | `true` | 是否提取有限的对话社交信号 |
 | `EnableOvernightMailGifts` | `true` | 是否启用隔夜惊喜邮件 |

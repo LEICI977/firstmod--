@@ -104,19 +104,7 @@ public sealed class AiProactiveEncounterMenu : IClickableMenu
 
     public override void receiveGamePadButton(Buttons button)
     {
-        if (button == Buttons.A)
-        {
-            TryChoose(0);
-            return;
-        }
-
-        if (button == Buttons.B)
-        {
-            CancelOrChooseDefer();
-            return;
-        }
-
-        base.receiveGamePadButton(button);
+        // Controller input is intentionally ignored by the mod.
     }
 
     public override void receiveScrollWheelAction(int direction)

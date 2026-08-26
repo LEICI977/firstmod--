@@ -3,7 +3,6 @@ using System.Net;
 using System.Collections.Concurrent;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using Microsoft.Xna.Framework.Input;
 using VivantValley.Menus;
 using VivantValley.Patches;
 using VivantValley.Services;
@@ -29,11 +28,10 @@ public sealed partial class ModEntry : Mod
     private IDeepSeekClient deepSeekClient = null!;
     private HttpClient aiHttpClient = null!;
     private HttpClient langGraphHttpClient = null!;
-    private HttpClient speechHttpClient = null!;
-    private SpeechToTextClient speechToTextClient = null!;
     private AiRuntimeProfile currentAiProfile = null!;
     private ConversationEngine conversationEngine = null!;
     private LangGraphClient langGraphClient = null!;
+    private LangGraphProcessManager? langGraphProcessManager;
     private ConversationOrchestrator conversationOrchestrator = null!;
     private GameBridgeServer? gameBridgeServer;
     private readonly ConcurrentQueue<GameBridgeWorkItem> gameBridgeWorkItems = new();
@@ -86,15 +84,21 @@ public sealed partial class ModEntry : Mod
         {
             Timeout = TimeSpan.FromSeconds(config.LangGraphTimeoutSeconds),
         };
+        string langGraphBaseUrl = config.LangGraphBaseUrl;
+        if (config.UseBundledLangGraph)
+        {
+            langGraphProcessManager = new LangGraphProcessManager(
+                helper.DirectoryPath,
+                config.BundledLangGraphPort,
+                TimeSpan.FromSeconds(config.BundledLangGraphStartupTimeoutSeconds),
+                message => Monitor.Log(message, LogLevel.Debug));
+            if (langGraphProcessManager.TryStart(out string bundledBaseUrl))
+                langGraphBaseUrl = bundledBaseUrl;
+        }
         langGraphClient = new LangGraphClient(
             langGraphHttpClient,
-            config.LangGraphBaseUrl,
+            langGraphBaseUrl,
             TimeSpan.FromSeconds(config.LangGraphTimeoutSeconds));
-        speechHttpClient = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(120),
-        };
-        speechToTextClient = new SpeechToTextClient(speechHttpClient, config.LangGraphBaseUrl);
         try
         {
             gameBridgeServer = new GameBridgeServer(EnqueueGameBridgeToolAsync, config.LangGraphBridgePort);
@@ -216,6 +220,8 @@ public sealed partial class ModEntry : Mod
 
     private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
     {
+        if (config.UseBundledLangGraph && langGraphProcessManager is not null)
+            langGraphProcessManager.TryStart(out _);
         conversationSessionMemory.Clear();
         npcMoveToolService.CancelAll("save_loaded");
         npcMineGuardService.CancelAll("save_loaded");
@@ -381,15 +387,13 @@ public sealed partial class ModEntry : Mod
 
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
     {
+        langGraphProcessManager?.Stop();
         conversationSessionMemory.Clear();
         npcMoveToolService.CancelAll("returned_to_title");
         npcMineGuardService.CancelAll("returned_to_title");
         npcFishingService.CancelAll("returned_to_title");
         foreach (ConversationScreenState state in screenStates.GetActiveValues().Select(pair => pair.Value))
         {
-            CancelVoiceRecording(state);
-            state.PendingVoiceStart = null;
-            state.PendingVoiceTranscription = null;
             CancelPendingConversation(state);
             CancelPendingSocialScene(state, retryToday: false);
             state.QueuedDialogue = null;
@@ -410,11 +414,15 @@ public sealed partial class ModEntry : Mod
 
     private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
     {
+        if (Context.IsWorldReady && config.UseBundledLangGraph && langGraphProcessManager is not null
+            && !langGraphProcessManager.IsRunning)
+        {
+            if (langGraphProcessManager.TryStart(out string restartedBaseUrl))
+                langGraphClient.SetBaseUrl(restartedBaseUrl);
+        }
         ProcessGameBridgeWorkItems();
         if (!Context.IsWorldReady)
             return;
-
-        ProcessControllerGestures(screenStates.Value);
 
         npcMoveToolService.Update();
         npcMineGuardService.Update();
@@ -524,25 +532,6 @@ public sealed partial class ModEntry : Mod
         if (!Context.IsWorldReady)
             return;
 
-        if (e.Button == SButton.ControllerA)
-        {
-            HandleControllerAPressed(e);
-            return;
-        }
-
-        if (e.Button == SButton.ControllerB)
-        {
-            HandleControllerBPressed(e);
-            return;
-        }
-
-        if (e.Button == SButton.Space
-            && (config.ChatKey == SButton.Space || Game1.activeClickableMenu is AiChatInputMenu))
-        {
-            HandleKeyboardSpacePressed(e);
-            return;
-        }
-
         if (e.Button != config.ChatKey)
             return;
 
@@ -582,429 +571,6 @@ public sealed partial class ModEntry : Mod
         npc.facePlayer(Game1.player);
         Monitor.Log($"已打开与 {npc.Name}（{npc.displayName}）的 AI 输入框。", LogLevel.Debug);
         OpenMessagePrompt(npc);
-    }
-
-    private void HandleControllerAPressed(ButtonPressedEventArgs e)
-    {
-        ConversationScreenState state = screenStates.Value;
-        if (Game1.activeClickableMenu is AiStreamingDialogueMenu)
-            return;
-
-        if (Game1.activeClickableMenu is not null && Game1.activeClickableMenu is not AiChatInputMenu)
-            return;
-
-        state.ControllerAPressed = true;
-        state.ControllerALongTriggered = false;
-        state.ControllerAElapsedTicks = 0;
-        Helper.Input.Suppress(e.Button);
-    }
-
-    private void HandleControllerBPressed(ButtonPressedEventArgs e)
-    {
-        ConversationScreenState state = screenStates.Value;
-        if (Game1.activeClickableMenu is AiStreamingDialogueMenu)
-            return;
-
-        if (Game1.activeClickableMenu is not AiChatInputMenu)
-            return;
-
-        state.ControllerBPressed = true;
-        state.ControllerBLongTriggered = false;
-        state.ControllerBElapsedTicks = 0;
-        Helper.Input.Suppress(e.Button);
-    }
-
-    private void HandleKeyboardSpacePressed(ButtonPressedEventArgs e)
-    {
-        ConversationScreenState state = screenStates.Value;
-        if (Game1.activeClickableMenu is AiStreamingDialogueMenu)
-            return;
-
-        if (Game1.activeClickableMenu is not null && Game1.activeClickableMenu is not AiChatInputMenu)
-            return;
-
-        // SMAPI can report keyboard auto-repeat as additional ButtonPressed
-        // events. Keep the original press timestamp so a held key can reach
-        // the long-press threshold instead of restarting the gesture.
-        if (state.KeyboardSpacePressed)
-        {
-            Helper.Input.Suppress(e.Button);
-            return;
-        }
-
-        state.KeyboardSpacePressed = true;
-        state.KeyboardSpaceLongTriggered = false;
-        state.KeyboardSpaceElapsedTicks = 0;
-        if (Game1.activeClickableMenu is AiChatInputMenu menu)
-            menu.BeginKeyboardSpaceGesture();
-        Helper.Input.Suppress(e.Button);
-    }
-
-    private void BeginControllerAGesture(ConversationScreenState state)
-    {
-        if (Game1.activeClickableMenu is AiStreamingDialogueMenu)
-            return;
-
-        if (Game1.activeClickableMenu is not null && Game1.activeClickableMenu is not AiChatInputMenu)
-            return;
-
-        state.ControllerAPressed = true;
-        state.ControllerALongTriggered = false;
-        state.ControllerAElapsedTicks = 0;
-    }
-
-    private void BeginControllerBGesture(ConversationScreenState state)
-    {
-        if (Game1.activeClickableMenu is AiStreamingDialogueMenu
-            || Game1.activeClickableMenu is not AiChatInputMenu)
-            return;
-
-        state.ControllerBPressed = true;
-        state.ControllerBLongTriggered = false;
-        state.ControllerBElapsedTicks = 0;
-    }
-
-    private void BeginKeyboardSpaceGesture(ConversationScreenState state)
-    {
-        if (Game1.activeClickableMenu is AiStreamingDialogueMenu)
-            return;
-
-        if (Game1.activeClickableMenu is not null && Game1.activeClickableMenu is not AiChatInputMenu)
-            return;
-
-        state.KeyboardSpacePressed = true;
-        state.KeyboardSpaceLongTriggered = false;
-        state.KeyboardSpaceElapsedTicks = 0;
-        if (Game1.activeClickableMenu is AiChatInputMenu menu)
-            menu.BeginKeyboardSpaceGesture();
-    }
-
-    private void CompleteControllerARelease(ConversationScreenState state)
-    {
-        if (!state.ControllerAPressed)
-            return;
-
-        state.ControllerAPressed = false;
-        Helper.Input.Suppress(SButton.ControllerA);
-        if (state.IsVoiceRecording || state.ControllerALongTriggered)
-        {
-            if (state.IsVoiceRecording)
-                QueueVoiceStop(state);
-        }
-        else if (Game1.activeClickableMenu is AiChatInputMenu inputMenu)
-        {
-            inputMenu.SubmitControllerText();
-        }
-        else if (CanOpenOwnMenu())
-        {
-            TryOpenControllerChat(state);
-        }
-
-        state.ControllerALongTriggered = false;
-        state.ControllerAElapsedTicks = 0;
-    }
-
-    private void CompleteKeyboardSpaceRelease(ConversationScreenState state)
-    {
-        if (!state.KeyboardSpacePressed)
-            return;
-
-        state.KeyboardSpacePressed = false;
-        Helper.Input.Suppress(SButton.Space);
-        bool wasLongPress = state.KeyboardSpaceLongTriggered;
-        state.KeyboardSpaceLongTriggered = false;
-        state.KeyboardSpaceElapsedTicks = 0;
-        if (state.IsVoiceRecording || wasLongPress)
-        {
-            if (Game1.activeClickableMenu is AiChatInputMenu longPressMenu)
-                longPressMenu.EndKeyboardSpaceGesture(restoreFocus: false);
-            if (state.IsVoiceRecording)
-                QueueVoiceStop(state);
-            return;
-        }
-
-        if (Game1.activeClickableMenu is AiChatInputMenu keyboardMenu)
-            keyboardMenu.AppendSpace();
-        else if (CanOpenOwnMenu())
-            TryOpenControllerChat(state);
-    }
-
-    private void CompleteControllerBRelease(ConversationScreenState state)
-    {
-        if (!state.ControllerBPressed)
-            return;
-
-        state.ControllerBPressed = false;
-        Helper.Input.Suppress(SButton.ControllerB);
-        if (state.ControllerBLongTriggered)
-        {
-            state.ControllerBLongTriggered = false;
-            state.ControllerBElapsedTicks = 0;
-            CloseControllerConversation(state);
-            return;
-        }
-
-        state.ControllerBElapsedTicks = 0;
-        if (state.IsVoiceRecording)
-        {
-            CancelVoiceRecording(state);
-            return;
-        }
-
-        if (Game1.activeClickableMenu is AiChatInputMenu menu)
-            menu.DeleteLastCharacter();
-    }
-
-    private void ProcessControllerGestures(ConversationScreenState state)
-    {
-        // Helper.Input.IsDown reflects SMAPI's logical state. Once we suppress
-        // a button, SMAPI intentionally reports it as released until the
-        // physical button is released, so gesture tracking must use the raw
-        // XNA device state instead.
-        bool controllerADown = IsPhysicalControllerButtonDown(Buttons.A);
-        if (controllerADown && !state.ControllerAPressed)
-            BeginControllerAGesture(state);
-        else if (!controllerADown && state.ControllerAPressed)
-            CompleteControllerARelease(state);
-
-        bool controllerBDown = IsPhysicalControllerButtonDown(Buttons.B);
-        if (controllerBDown && !state.ControllerBPressed)
-            BeginControllerBGesture(state);
-        else if (!controllerBDown && state.ControllerBPressed)
-            CompleteControllerBRelease(state);
-
-        bool keyboardSpaceDown = config.ChatKey == SButton.Space || Game1.activeClickableMenu is AiChatInputMenu;
-        bool spaceDown = keyboardSpaceDown && IsPhysicalKeyboardSpaceDown();
-        if (spaceDown && !state.KeyboardSpacePressed)
-            BeginKeyboardSpaceGesture(state);
-        else if (!spaceDown && state.KeyboardSpacePressed)
-            CompleteKeyboardSpaceRelease(state);
-
-        if (state.ControllerAPressed)
-        {
-            state.ControllerAElapsedTicks++;
-            if (!state.ControllerALongTriggered && state.ControllerAElapsedTicks >= 30)
-            {
-                state.ControllerALongTriggered = true;
-                if (Game1.activeClickableMenu is not AiChatInputMenu)
-                    TryOpenControllerChat(state);
-
-                if (Game1.activeClickableMenu is AiChatInputMenu menu)
-                    StartVoiceRecording(state, menu);
-            }
-        }
-
-        if (state.ControllerBPressed)
-        {
-            state.ControllerBElapsedTicks++;
-            if (!state.ControllerBLongTriggered && state.ControllerBElapsedTicks >= 36)
-            {
-                state.ControllerBLongTriggered = true;
-                CloseControllerConversation(state);
-            }
-        }
-
-        if (state.KeyboardSpacePressed)
-        {
-            if (Game1.activeClickableMenu is AiChatInputMenu keyboardMenu)
-                keyboardMenu.BeginKeyboardSpaceGesture();
-
-            state.KeyboardSpaceElapsedTicks++;
-            if (!state.KeyboardSpaceLongTriggered && state.KeyboardSpaceElapsedTicks >= 30)
-            {
-                state.KeyboardSpaceLongTriggered = true;
-                if (Game1.activeClickableMenu is not AiChatInputMenu)
-                    TryOpenControllerChat(state);
-
-                if (Game1.activeClickableMenu is AiChatInputMenu menu)
-                {
-                    menu.BeginKeyboardSpaceGesture();
-                    StartVoiceRecording(state, menu);
-                }
-            }
-        }
-
-        if (state.PendingVoiceTranscription is { IsCompleted: true })
-        {
-            Task<string> task = state.PendingVoiceTranscription;
-            state.PendingVoiceTranscription = null;
-            state.IsVoiceRecording = false;
-            try
-            {
-                string transcription = task.GetAwaiter().GetResult();
-                if (Game1.activeClickableMenu is AiChatInputMenu menu)
-                    menu.SubmitRecognizedText(transcription);
-            }
-            catch (Exception ex)
-            {
-                if (Game1.activeClickableMenu is AiChatInputMenu menu)
-                    menu.SetVoiceError(CleanErrorForPlayer(ex.Message));
-                Monitor.Log($"Voice transcription failed: {ex}", LogLevel.Warn);
-            }
-        }
-
-        if (state.PendingVoiceTranscription is null
-            && state.PendingVoiceStart is { IsCompleted: true, IsFaulted: true } failedStart)
-        {
-            state.PendingVoiceStart = null;
-            state.IsVoiceRecording = false;
-            if (Game1.activeClickableMenu is AiChatInputMenu menu)
-                menu.SetVoiceError(CleanErrorForPlayer(failedStart.Exception?.GetBaseException().Message ?? "Voice recording failed."));
-        }
-    }
-
-    /// <summary>Read the physical controller state without SMAPI suppression overrides.</summary>
-    private static bool IsPhysicalControllerButtonDown(Buttons button)
-        => GamePad.GetState(PlayerIndex.One).IsButtonDown(button);
-
-    /// <summary>Read the physical keyboard state without SMAPI suppression overrides.</summary>
-    private static bool IsPhysicalKeyboardSpaceDown()
-        => Keyboard.GetState().IsKeyDown(Keys.Space);
-
-    private void TryOpenControllerChat(ConversationScreenState state)
-    {
-        if (!CanOpenOwnMenu())
-            return;
-
-        ClearConversationContinuation(state);
-        if (state.PendingSocialScene is not null || state.QueuedSocialScene is not null)
-            CancelPendingSocialScene(state, retryToday: true);
-
-        if (string.IsNullOrWhiteSpace(runtimeApiKey))
-        {
-            state.RequestApiKeyPrompt = true;
-            ShowHud("AI 提供商设置尚未完成。", HUDMessage.error_type);
-            return;
-        }
-
-        if (state.HasPendingConversation)
-        {
-            string npcDisplayName = state.PendingInfo?.NpcDisplayName ?? "村民";
-            CancelPendingConversation(state);
-            ShowHud($"已取消与 {npcDisplayName} 的待处理对话。");
-            return;
-        }
-
-        NPC? npc = FindTargetNpc();
-        if (npc is null)
-        {
-            ShowHud("请面向一位可交谈的村民后再打开对话。", HUDMessage.error_type);
-            return;
-        }
-
-        npc.facePlayer(Game1.player);
-        OpenMessagePrompt(npc);
-    }
-
-    private void StartVoiceRecording(ConversationScreenState state, AiChatInputMenu menu)
-    {
-        if (state.IsVoiceRecording || state.PendingVoiceTranscription is not null)
-            return;
-
-        state.IsVoiceRecording = true;
-        state.VoiceCancellation.Dispose();
-        state.VoiceCancellation = new CancellationTokenSource();
-        menu.SetVoiceRecordingState();
-        state.PendingVoiceStart = speechToTextClient.StartRecordingAsync(CancellationToken.None);
-        _ = state.PendingVoiceStart.ContinueWith(
-            completed =>
-            {
-                if (completed.IsFaulted)
-                    Monitor.Log($"Voice recording failed: {completed.Exception?.GetBaseException().Message}", LogLevel.Warn);
-            },
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-    }
-
-    private void QueueVoiceStop(ConversationScreenState state)
-    {
-        if (state.PendingVoiceTranscription is not null)
-            return;
-
-        if (Game1.activeClickableMenu is AiChatInputMenu menu)
-            menu.SetVoiceProcessingState();
-        state.PendingVoiceTranscription = StopVoiceAfterStartAsync(state);
-    }
-
-    private async Task<string> StopVoiceAfterStartAsync(ConversationScreenState state)
-    {
-        if (state.PendingVoiceStart is not null)
-        {
-            try
-            {
-                await state.PendingVoiceStart.ConfigureAwait(false);
-            }
-            finally
-            {
-                state.PendingVoiceStart = null;
-            }
-        }
-
-        return await speechToTextClient.StopAndTranscribeAsync(state.VoiceCancellation.Token).ConfigureAwait(false);
-    }
-
-    private void CancelVoiceRecording(ConversationScreenState state)
-    {
-        if (!state.IsVoiceRecording
-            && state.PendingVoiceStart is null
-            && state.PendingVoiceTranscription is null)
-            return;
-
-        state.IsVoiceRecording = false;
-        state.VoiceCancellation.Cancel();
-        Task? pendingStart = state.PendingVoiceStart;
-        Task<string>? pendingTranscription = state.PendingVoiceTranscription;
-        state.PendingVoiceStart = null;
-        state.PendingVoiceTranscription = null;
-        _ = CancelVoiceAfterStartAsync(pendingStart, pendingTranscription);
-        if (Game1.activeClickableMenu is AiChatInputMenu menu)
-            menu.SetVoiceError("已取消录音。");
-    }
-
-    private async Task CancelVoiceAfterStartAsync(Task? pendingStart, Task<string>? pendingTranscription)
-    {
-        if (pendingStart is not null)
-        {
-            try
-            {
-                await pendingStart.ConfigureAwait(false);
-            }
-            catch (Exception)
-            {
-                // The cancel endpoint is still called in case the server began recording.
-            }
-        }
-
-        try
-        {
-            await speechToTextClient.CancelRecordingAsync(CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            Monitor.Log($"Voice recording cancellation failed: {ex.Message}", LogLevel.Warn);
-        }
-
-        if (pendingTranscription is not null)
-        {
-            try
-            {
-                await pendingTranscription.ConfigureAwait(false);
-            }
-            catch (Exception)
-            {
-                // Observe a canceled or failed transcription after the UI has closed.
-            }
-        }
-    }
-
-    private void CloseControllerConversation(ConversationScreenState state)
-    {
-        CancelVoiceRecording(state);
-        if (Game1.activeClickableMenu is AiChatInputMenu menu)
-            menu.exitThisMenuNoSound();
-        else if (state.HasPendingConversation)
-            CancelPendingConversation(state);
     }
 
     private NPC? FindTargetNpc()
@@ -3662,6 +3228,8 @@ public sealed partial class ModEntry : Mod
         config.RequestTimeoutSeconds = Math.Clamp(config.RequestTimeoutSeconds, 10, 600);
         config.LangGraphTimeoutSeconds = Math.Clamp(config.LangGraphTimeoutSeconds, 10, 600);
         config.LangGraphBridgePort = Math.Clamp(config.LangGraphBridgePort, 1024, 65535);
+        config.BundledLangGraphPort = Math.Clamp(config.BundledLangGraphPort, 0, 65535);
+        config.BundledLangGraphStartupTimeoutSeconds = Math.Clamp(config.BundledLangGraphStartupTimeoutSeconds, 5, 120);
         config.LangGraphBaseUrl = string.IsNullOrWhiteSpace(config.LangGraphBaseUrl)
             ? "http://127.0.0.1:8123"
             : config.LangGraphBaseUrl.Trim().TrimEnd('/');
@@ -3686,8 +3254,8 @@ public sealed partial class ModEntry : Mod
         config.ProactiveUiScale = float.IsFinite(config.ProactiveUiScale)
             ? Math.Clamp(config.ProactiveUiScale, 0.75f, 1.5f)
             : 1f;
-        config.DailyCandidateMin = Math.Clamp(config.DailyCandidateMin, 1, 5);
-        config.DailyCandidateMax = Math.Clamp(config.DailyCandidateMax, config.DailyCandidateMin, 5);
+        config.DailyCandidateMin = Math.Clamp(config.DailyCandidateMin, 1, 6);
+        config.DailyCandidateMax = Math.Clamp(config.DailyCandidateMax, config.DailyCandidateMin, 6);
         config.DailyEncounterLimit = Math.Clamp(config.DailyEncounterLimit, 1, 10);
         config.ConversationLookbackDays = Math.Clamp(config.ConversationLookbackDays, 1, 112);
         config.PositiveConversationThreshold = Math.Clamp(config.PositiveConversationThreshold, 0d, 1d);
@@ -4360,32 +3928,6 @@ public sealed partial class ModEntry : Mod
     private sealed class ConversationScreenState
     {
         public CancellationTokenSource SessionCancellation { get; set; } = new();
-
-        public bool ControllerAPressed { get; set; }
-
-        public bool ControllerALongTriggered { get; set; }
-
-        public int ControllerAElapsedTicks { get; set; }
-
-        public bool ControllerBPressed { get; set; }
-
-        public bool ControllerBLongTriggered { get; set; }
-
-        public int ControllerBElapsedTicks { get; set; }
-
-        public bool KeyboardSpacePressed { get; set; }
-
-        public bool KeyboardSpaceLongTriggered { get; set; }
-
-        public int KeyboardSpaceElapsedTicks { get; set; }
-
-        public bool IsVoiceRecording { get; set; }
-
-        public CancellationTokenSource VoiceCancellation { get; set; } = new();
-
-        public Task? PendingVoiceStart { get; set; }
-
-        public Task<string>? PendingVoiceTranscription { get; set; }
 
         public bool RequestApiKeyPrompt { get; set; }
 

@@ -145,6 +145,8 @@ public sealed class AiSocialSceneService
         builder.AppendLine("这不是固定剧情或恋爱脚本。根据近期真实聊天、玩家近期活动、当前存档事实与角色性格，做一次自然、克制、可独立成立的现实社交互动。");
         builder.AppendLine("不要增加原版好感，不要泄露未发生事件，不要虚构已经发生的共同经历。dialogue 必须是角色第一人称说的话，不写旁白、动作括号、角色名前缀或 Markdown。");
         builder.AppendLine("action 只能是 talk_only 或 gift。gift 表示请求调用 give_gift Tool。礼物不是必需；只有确实贴合上下文时才能选 gift，而且 giftCandidateId 只能从用户消息给出的候选 ID 中精确选择。不能输出物品 ID。");
+        if (request.EncourageOptionalGift)
+            builder.AppendLine("手柄玩家无法主动发起文字对话。若候选礼物确实符合当前关系、情境和你的性格，可以自然地主动送礼；这仍由角色本人决定，不能因为存在候选就必送。");
         builder.AppendLine("若选择 gift，dialogue 要像当面交流一样自然地提出这份礼物；若选择 talk_only，不要声称已经送出任何东西。");
         builder.AppendLine("只输出一个 JSON 对象，字段严格为 dialogue、action、giftCandidateId、motiveTag；talk_only 时 giftCandidateId 必须为 null。不要代码围栏或额外文字。");
         return builder.ToString().Trim();

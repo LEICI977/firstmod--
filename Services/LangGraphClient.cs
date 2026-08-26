@@ -16,8 +16,8 @@ public sealed class LangGraphClient
     };
 
     private readonly HttpClient httpClient;
-    private readonly Uri decisionEndpoint;
-    private readonly Uri confirmationEndpoint;
+    private Uri decisionEndpoint;
+    private Uri confirmationEndpoint;
 
     public LangGraphClient(HttpClient httpClient, string baseUrl, TimeSpan timeout)
     {
@@ -32,6 +32,17 @@ public sealed class LangGraphClient
         confirmationEndpoint = new Uri(parsed, "/v1/graph/confirm");
         timeout = timeout <= TimeSpan.Zero ? TimeSpan.FromSeconds(120) : timeout;
         httpClient.Timeout = timeout;
+    }
+
+    public void SetBaseUrl(string baseUrl)
+    {
+        if (!Uri.TryCreate((baseUrl ?? string.Empty).Trim().TrimEnd('/') + "/v1/graph/decision", UriKind.Absolute, out Uri? parsed)
+            || (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new ArgumentException("LangGraphBaseUrl must be an absolute HTTP URL.", nameof(baseUrl));
+        }
+        decisionEndpoint = parsed;
+        confirmationEndpoint = new Uri(parsed, "/v1/graph/confirm");
     }
 
     public async Task<LangGraphResponse> DecideAsync(
