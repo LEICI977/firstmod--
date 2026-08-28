@@ -2,7 +2,10 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
 
-    [string]$GamePath = ""
+    [string]$GamePath = "",
+
+    [ValidateSet("win-x64", "osx-x64", "osx-arm64")]
+    [string]$BackendPlatform = "win-x64"
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,8 +15,14 @@ $projectFile = Join-Path $projectRoot "VivantValley.csproj"
 $outputDirectory = Join-Path $projectRoot "bin\$Configuration\net6.0"
 $distRoot = Join-Path $projectRoot "dist"
 $packageDirectory = Join-Path $distRoot "VivantValley"
-$zipPath = Join-Path $distRoot "VivantValley-$Configuration.zip"
 $backendArtifacts = Join-Path $projectRoot "artifacts\backend"
+$platformLabel = switch ($BackendPlatform) {
+    "win-x64" { "Windows-x64" }
+    "osx-x64" { "macOS-Intel" }
+    "osx-arm64" { "macOS-AppleSilicon" }
+    default { throw "Unsupported backend platform: $BackendPlatform" }
+}
+$zipPath = Join-Path $distRoot "VivantValley-$platformLabel-$Configuration.zip"
 
 $buildArguments = @("build", $projectFile, "-c", $Configuration)
 if (-not [string]::IsNullOrWhiteSpace($GamePath)) {
@@ -74,17 +83,24 @@ if (-not (Test-Path -LiteralPath $backendArtifacts -PathType Container)) {
     throw "Bundled backend artifacts are missing: $backendArtifacts. Build the backend before packaging."
 }
 
-$backendPlatforms = @(Get-ChildItem -LiteralPath $backendArtifacts -Directory)
-if ($backendPlatforms.Count -eq 0) {
-    throw "No bundled backend platform directories were found under: $backendArtifacts"
+$backendSource = Join-Path $backendArtifacts $BackendPlatform
+if (-not (Test-Path -LiteralPath $backendSource -PathType Container)) {
+    throw "The requested bundled backend platform is missing: $backendSource"
 }
 
 $packageBackendPath = Join-Path $packageDirectory "backend"
-Copy-Item -LiteralPath $backendArtifacts -Destination $packageBackendPath -Recurse -Force
+New-Item -ItemType Directory -Path $packageBackendPath -Force | Out-Null
+Copy-Item -LiteralPath $backendSource -Destination $packageBackendPath -Recurse -Force
 
-$windowsBackendExecutable = Join-Path $packageBackendPath "win-x64\VivantValley.LangGraph.exe"
-if (-not (Test-Path -LiteralPath $windowsBackendExecutable -PathType Leaf)) {
-    throw "The Windows bundled backend is missing from the package: $windowsBackendExecutable"
+$backendExecutableName = if ($BackendPlatform -eq "win-x64") {
+    "VivantValley.LangGraph.exe"
+}
+else {
+    "VivantValley.LangGraph"
+}
+$backendExecutable = Join-Path $packageBackendPath "$BackendPlatform\$backendExecutableName"
+if (-not (Test-Path -LiteralPath $backendExecutable -PathType Leaf)) {
+    throw "The requested bundled backend executable is missing from the package: $backendExecutable"
 }
 
 $backendReadme = Join-Path $projectRoot "backend\README.md"
@@ -98,6 +114,35 @@ if (Test-Path -LiteralPath $zipPath) {
     Remove-Item -LiteralPath $zipPath -Force
 }
 Compress-Archive -LiteralPath $packageDirectory -DestinationPath $zipPath -CompressionLevel Optimal
+
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+try {
+    $entryNames = @($zip.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
+    $expectedExecutableEntry = "VivantValley/backend/$BackendPlatform/$backendExecutableName"
+    if ($entryNames -notcontains $expectedExecutableEntry) {
+        throw "Packaged archive is missing its expected backend executable: $expectedExecutableEntry"
+    }
+
+    $unexpectedBackendEntries = @($entryNames | Where-Object {
+        $isBackendEntry = $_.StartsWith("VivantValley/backend/", [StringComparison]::OrdinalIgnoreCase)
+        $isSelectedPlatformEntry = $_.StartsWith(
+            "VivantValley/backend/$BackendPlatform/",
+            [StringComparison]::OrdinalIgnoreCase)
+        $isBackendReadme = $_.Equals("VivantValley/backend/README.md", [StringComparison]::OrdinalIgnoreCase)
+        $isBackendEntry -and -not $isSelectedPlatformEntry -and -not $isBackendReadme
+    })
+    if ($unexpectedBackendEntries.Count -gt 0) {
+        throw "Packaged archive contains files for another backend platform: $($unexpectedBackendEntries -join ', ')"
+    }
+
+    if ($entryNames -contains "VivantValley/config.json") {
+        throw "Packaged archive must not contain config.json."
+    }
+}
+finally {
+    $zip.Dispose()
+}
 
 Write-Host "Package directory: $packageDirectory"
 Write-Host "Package archive:   $zipPath"

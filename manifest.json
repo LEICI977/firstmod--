@@ -2,7 +2,7 @@
   "Name": "Vivant Valley",
   "Author": "firstmod",
   "Version": "0.13.0",
-  "Description": "Context-aware AI conversations, lasting NPC memories, natural encounters, and meaningful gifts.",
+  "Description": "Personality-driven NPC dialogue with memory, proactive encounters, shared travel, mine-guard combat, fishing companions, and code-validated gifts.",
   "UniqueID": "firstmod.StardewAIMemories",
   "EntryDll": "VivantValley.dll",
   "MinimumApiVersion": "4.0.0"
